@@ -6,6 +6,7 @@
 [![Linting: ruff](https://img.shields.io/badge/linting-ruff-261230.svg)](https://docs.astral.sh/ruff/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Type checked: mypy](https://img.shields.io/badge/type%20checked-mypy-blue.svg)](https://mypy-lang.org/)
+[![Container](https://img.shields.io/badge/ghcr.io-fplquant-blue?logo=docker&logoColor=white)](https://github.com/sidharthjoly/FPLQuant/pkgs/container/fplquant)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Demo](https://img.shields.io/badge/demo-live-brightgreen.svg)](https://fplquant.sidharthjoly.com/)
 
