@@ -6,6 +6,8 @@ readme = "README.md"
 authors = [
     { name = "Sidharth Joly", email = "sidharthjoly@mail.com" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.19.1",
