@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     optimize_cache_ttl_seconds: int = 3600
 
+    # Wall-clock ceiling on the multi-gameweek solve, which is by far the most
+    # expensive thing the API does — a ten-gameweek horizon with all three
+    # chips will happily use two minutes of CPU looking for the last tenth of a
+    # point. The CLI can afford that; a shared HTTP service holding a worker
+    # for that long cannot, least of all on a single-core free-tier VM. The
+    # solver keeps the best plan it has found when the clock runs out, and in
+    # practice the incumbent stops improving long before this fires.
+    plan_solver_time_limit_seconds: int = 20
+
     # Comma-separated allowed CORS origins, or "*" for all. The frontend is
     # deployed separately (GitHub Pages) from the backend (droplet), so this
     # needs the Pages origin explicitly — same-origin local dev doesn't hit

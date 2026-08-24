@@ -248,3 +248,127 @@ class NextDeadlineOut(BaseModel):
         default=None, description="ISO 8601 UTC deadline for the next gameweek, or null preseason"
     )
     gameweek: int | None = None
+
+
+class PointsBreakdownOut(BaseModel):
+    """Expected points for one player in one fixture, split by scoring rule."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    appearance: float
+    goals: float
+    assists: float
+    clean_sheet: float
+    goals_conceded: float
+    saves: float
+    bonus: float
+    cards: float
+    clean_sheet_probability: float
+    total: float
+
+
+class FixtureProjectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    fixture_id: int
+    event: int
+    opponent_short_name: str | None
+    is_home: bool
+    lambda_for: float = Field(description="Expected goals for the player's side in this fixture")
+    lambda_against: float
+    breakdown: PointsBreakdownOut
+
+
+class EventProjectionOut(BaseModel):
+    event: int
+    points: float
+    is_blank: bool = Field(description="Their club has no fixture this gameweek")
+    is_double: bool = Field(description="Their club plays twice this gameweek")
+    fixtures: list[FixtureProjectionOut]
+
+
+class PlayerOutcomeOut(BaseModel):
+    """The simulated distribution of a player's points, from a Monte Carlo run."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    mean: float
+    median: float
+    stdev: float
+    floor: float
+    ceiling: float
+    blank_probability: float
+    haul_probability: float
+
+
+class HorizonProjectionOut(BaseModel):
+    player_id: int
+    web_name: str
+    team_id: int
+    team_short_name: str
+    element_type: int
+    now_cost: int
+    total_points: float
+    discounted_points: float
+    next_event_points: float
+    p_start: float
+    expected_minutes: float
+    goal_share: float
+    assist_share: float
+    rate_credibility: float = Field(
+        description="0.0 = the estimate is entirely price-implied, 1.0 = entirely their own record"
+    )
+    events: list[EventProjectionOut]
+    outcome: PlayerOutcomeOut | None = None
+
+
+class ProjectionResponse(BaseModel):
+    horizon: int
+    events: list[int]
+    decay: float
+    simulated_event: int | None = None
+    simulations: int | None = None
+    players: list[HorizonProjectionOut]
+
+
+class PlanRequest(BaseModel):
+    horizon: int = Field(default=5, ge=1, le=10, description="Gameweeks to plan over")
+    budget: float = Field(default=100.0, gt=0, description="Budget in millions")
+    max_per_club: int = Field(default=3, ge=1)
+    decay: float = Field(default=0.9, gt=0, le=1, description="Per-gameweek discount")
+    fpl_team_id: int | None = Field(
+        default=None, description="Plan from a real FPL squad instead of building from scratch"
+    )
+    free_transfers: int = Field(default=1, ge=0, le=5)
+    chips: list[Literal["wildcard", "bench_boost", "triple_captain"]] = Field(
+        default_factory=list,
+        description="Chips the planner may schedule, each played at most once over the horizon",
+    )
+
+
+class TransferMoveOut(BaseModel):
+    out: SquadPlayerOut | None = None
+    in_: SquadPlayerOut | None = Field(default=None, alias="in")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class GameweekPlanOut(BaseModel):
+    event: int
+    expected_points: float
+    free_transfers_available: int
+    hits_taken: int
+    hit_cost: int
+    chip: str | None
+    transfers: list[TransferMoveOut]
+    squad: list[SquadPlayerOut]
+    starting_xi: StartingXIOut
+
+
+class PlanResponse(BaseModel):
+    events: list[int]
+    total_expected_points: float
+    total_hit_cost: int
+    solver_status: str
+    team_name: str | None = None
+    gameweeks: list[GameweekPlanOut]
