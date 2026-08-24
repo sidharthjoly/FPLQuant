@@ -312,3 +312,90 @@ def test_precomputed_lineup_multipliers_are_used_instead_of_recomputing(
     assert default.lineup_multiplier == 1.0
     assert injected.lineup_multiplier == 0.5
     assert injected.adjusted_points == pytest.approx(default.adjusted_points * 0.5)
+
+
+def _overall(team: Team, home: int, away: int) -> Team:
+    """Set the coarse 1-5 rating, which is all FPL publishes for much of preseason."""
+    team.strength_overall_home = home
+    team.strength_overall_away = away
+    return team
+
+
+def test_the_multiplier_survives_fpl_publishing_no_granular_strengths(
+    db_session: Session,
+) -> None:
+    """FPL leaves all four granular strength columns at zero for every club for
+    much of preseason and into the opening rounds. Reading only those made
+    `_fixture_multiplier` return exactly 1.0 for every player in the league, so
+    the fixture adjustment — opponent, venue and all — was silently inert at
+    precisely the point in the season when there is least else to go on."""
+    home = _overall(
+        _team(db_session, 1, "HOM", attack_home=0, attack_away=0, defence_home=0, defence_away=0),
+        3,
+        3,
+    )
+    weak = _overall(
+        _team(db_session, 2, "WEA", attack_home=0, attack_away=0, defence_home=0, defence_away=0),
+        2,
+        2,
+    )
+    strong = _overall(
+        _team(db_session, 3, "STR", attack_home=0, attack_away=0, defence_home=0, defence_away=0),
+        5,
+        5,
+    )
+    db_session.flush()
+
+    forward = _player(db_session, home, fpl_id=1, web_name="Fwd", element_type=FWD)
+    _fixture(
+        db_session,
+        home,
+        weak,
+        fpl_id=1,
+        kickoff=dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
+    )
+    other = _player(db_session, strong, fpl_id=2, web_name="Other", element_type=FWD)
+    db_session.commit()
+
+    scores = {s.web_name: s for s in compute_fixture_adjusted_scores(db_session)}
+
+    assert scores["Fwd"].fixture_multiplier is not None
+    assert scores["Fwd"].fixture_multiplier > 1.0  # a weak defence is a good fixture
+    assert forward.id and other.id  # both players were scored
+
+
+def test_a_league_with_no_usable_ratings_at_all_stays_neutral(db_session: Session) -> None:
+    """Every scale flat is the one case where 1.0 is the honest answer rather
+    than a bug — there is genuinely nothing separating the clubs."""
+    home = _team(db_session, 1, "HOM", attack_home=0, attack_away=0, defence_home=0, defence_away=0)
+    away = _team(db_session, 2, "AWA", attack_home=0, attack_away=0, defence_home=0, defence_away=0)
+    db_session.flush()
+    _player(db_session, home, fpl_id=1, web_name="Fwd", element_type=FWD)
+    _fixture(db_session, home, away, fpl_id=1, kickoff=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
+    db_session.commit()
+
+    scores = {s.web_name: s for s in compute_fixture_adjusted_scores(db_session)}
+
+    assert scores["Fwd"].fixture_multiplier == 1.0
+
+
+def test_the_granular_ratings_are_preferred_when_they_carry_information(
+    db_session: Session,
+) -> None:
+    """The coarse rating is a fallback, not a replacement: it cannot tell a side
+    that scores and concedes freely from a solid one, and the granular columns
+    can."""
+    home = _overall(_team(db_session, 1, "HOM"), 3, 3)
+    # Coarse rating says this club is excellent; the granular one says their
+    # defence specifically is poor. A forward facing them should like it.
+    leaky = _overall(_team(db_session, 2, "LEA", defence_home=500, defence_away=500), 5, 5)
+    db_session.flush()
+
+    _player(db_session, home, fpl_id=1, web_name="Fwd", element_type=FWD)
+    _fixture(db_session, home, leaky, fpl_id=1, kickoff=dt.datetime(2026, 9, 1, tzinfo=dt.UTC))
+    db_session.commit()
+
+    scores = {s.web_name: s for s in compute_fixture_adjusted_scores(db_session)}
+
+    assert scores["Fwd"].fixture_multiplier is not None
+    assert scores["Fwd"].fixture_multiplier > 1.0

@@ -31,29 +31,82 @@ class FixtureAdjustedScore:
     adjusted_points: float  # base * fixture_multiplier * chance_of_playing * lineup_multiplier
 
 
-def _league_average_strengths(teams: list[Team]) -> tuple[float, float]:
-    """League-average attack and defence strength, blended across home/away.
+# The strength columns to read, in order of preference. FPL publishes a
+# granular attack/defence rating per venue, and also a coarse `strength_overall`
+# on a 1-5 scale. The granular pair is the better signal — it separates a side
+# that scores freely and concedes freely from a solid one — but it is *not
+# always populated*: for much of preseason and into the opening rounds FPL
+# leaves all four granular columns at zero for all twenty clubs, at which point
+# the only rating with any information in it is the coarse one.
+_ATTACK_COLUMNS = ("strength_attack_home", "strength_attack_away")
+_DEFENCE_COLUMNS = ("strength_defence_home", "strength_defence_away")
+_OVERALL_COLUMNS = ("strength_overall_home", "strength_overall_away")
 
-    Computed from the pool itself rather than hardcoded, so this keeps
-    working if FPL ever rescales their strength ratings.
+
+@dataclass(frozen=True)
+class _StrengthScale:
+    """Which team-strength column to read, and the league average of it.
+
+    Bundled together because the two have to agree: comparing a club's rating
+    on one scale against a league average computed on another produces a
+    multiplier that is nonsense rather than merely noisy.
     """
-    attack_values = [t.strength_attack_home for t in teams] + [
-        t.strength_attack_away for t in teams
-    ]
-    defence_values = [t.strength_defence_home for t in teams] + [
-        t.strength_defence_away for t in teams
-    ]
-    avg_attack = statistics.fmean(attack_values) if attack_values else 1.0
-    avg_defence = statistics.fmean(defence_values) if defence_values else 1.0
-    return avg_attack, avg_defence
+
+    home_attribute: str
+    away_attribute: str
+    league_average: float
+
+    def rating(self, team: Team, is_home: bool) -> float:
+        attribute = self.home_attribute if is_home else self.away_attribute
+        return float(getattr(team, attribute))
+
+    @property
+    def is_informative(self) -> bool:
+        return self.league_average > 0
+
+
+def _strength_scale(teams: list[Team], *candidates: tuple[str, str]) -> _StrengthScale:
+    """The first of `candidates` whose column pair actually separates the clubs.
+
+    A column where every club has the same number — the granular strengths in
+    preseason, which are simply zero for all twenty — is not a weak signal to
+    be used cautiously, it is the absence of one, and reading it yields a
+    multiplier of exactly 1.0 for every player in the league. Falling through
+    to the next candidate is what keeps the fixture adjustment alive at the
+    point in the season when there is least else to go on.
+    """
+    for home_attribute, away_attribute in candidates:
+        values = [
+            float(getattr(team, attribute))
+            for team in teams
+            for attribute in (home_attribute, away_attribute)
+        ]
+        if values and max(values) > 0 and max(values) > min(values):
+            return _StrengthScale(home_attribute, away_attribute, statistics.fmean(values))
+    # Nothing to go on — every club looks identical on every scale. A neutral
+    # scale makes `_fixture_multiplier` return 1.0, which is the honest answer.
+    return _StrengthScale(*candidates[0], 0.0)
+
+
+def _league_strength_scales(teams: list[Team]) -> tuple[_StrengthScale, _StrengthScale]:
+    """The attack and defence scales to judge this league's fixtures on.
+
+    Chosen independently, so a season where FPL has published attack ratings
+    but not defence ones uses the best available for each rather than dropping
+    both to the coarse rating.
+    """
+    return (
+        _strength_scale(teams, _ATTACK_COLUMNS, _OVERALL_COLUMNS),
+        _strength_scale(teams, _DEFENCE_COLUMNS, _OVERALL_COLUMNS),
+    )
 
 
 def _fixture_multiplier(
     element_type: int,
     opponent: Team,
     opponent_is_home: bool,
-    league_avg_attack: float,
-    league_avg_defence: float,
+    attack_scale: _StrengthScale,
+    defence_scale: _StrengthScale,
 ) -> float:
     """How much easier/harder this fixture is than average, for this position.
 
@@ -62,21 +115,23 @@ def _fixture_multiplier(
     forwards score from goal involvements, so what matters to them is the
     opponent's *defence* strength. Either way, a stronger opponent in the
     relevant discipline means a smaller multiplier.
-    """
-    if element_type in (GOALKEEPER, DEFENDER):
-        relevant = (
-            opponent.strength_attack_home if opponent_is_home else opponent.strength_attack_away
-        )
-        league_avg = league_avg_attack
-    else:
-        relevant = (
-            opponent.strength_defence_home if opponent_is_home else opponent.strength_defence_away
-        )
-        league_avg = league_avg_defence
 
+    Both directions read the same way whichever scale is in use: FPL's ratings
+    go up as a club gets better, so the overall rating stands in for either
+    discipline without inverting. It is a blunter instrument — four distinct
+    values across twenty clubs, against a granular scale in the thousands — so
+    the clamps below bind more often when it is the one being read. That is the
+    right failure mode: a saturated nudge in the correct direction beats no
+    nudge at all, which is what this returned before the fallback existed.
+    """
+    scale = attack_scale if element_type in (GOALKEEPER, DEFENDER) else defence_scale
+    if not scale.is_informative:
+        return 1.0
+
+    relevant = scale.rating(opponent, opponent_is_home)
     if relevant <= 0:
         return 1.0
-    multiplier = league_avg / relevant
+    multiplier = scale.league_average / relevant
     return max(_MIN_MULTIPLIER, min(_MAX_MULTIPLIER, multiplier))
 
 
@@ -127,7 +182,7 @@ def compute_fixture_adjusted_scores(
         lineup_multipliers = lineup_multipliers_by_player(session)
     next_fixture_by_team = get_next_fixture_by_team(session)
     teams_by_id = {t.id: t for t in session.query(Team).all()}
-    league_avg_attack, league_avg_defence = _league_average_strengths(list(teams_by_id.values()))
+    attack_scale, defence_scale = _league_strength_scales(list(teams_by_id.values()))
 
     scores = []
     for player in session.query(Player).all():
@@ -169,7 +224,7 @@ def compute_fixture_adjusted_scores(
             multiplier = 1.0
         else:
             multiplier = _fixture_multiplier(
-                player.element_type, opponent, not is_home, league_avg_attack, league_avg_defence
+                player.element_type, opponent, not is_home, attack_scale, defence_scale
             )
 
         scores.append(
