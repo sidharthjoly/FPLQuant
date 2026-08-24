@@ -350,6 +350,7 @@ build step. Full write-up in
 src/fplquant/
   config.py         typed settings (pydantic-settings), env-overridable
   models/           SQLAlchemy ORM models + engine/session setup
+                    (incl. daily point-in-time snapshots, for future backtests)
   data/             FPL API client + ingestion pipeline
   form/             EWMA-based form scoring (points + underlying stats)
   lineup/           inferred formations, start probability, fatigue

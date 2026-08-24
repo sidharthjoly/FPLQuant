@@ -7,7 +7,14 @@ from sqlalchemy.orm import Session
 
 from fplquant.data.fpl_client import FPLClient
 from fplquant.models.base import session_scope
-from fplquant.models.orm import Fixture, Player, PlayerGameweekStat, Team
+from fplquant.models.orm import (
+    Fixture,
+    Player,
+    PlayerGameweekStat,
+    PlayerSnapshot,
+    Team,
+    TeamSnapshot,
+)
 from fplquant.utils import as_float
 
 logger = logging.getLogger(__name__)
@@ -141,6 +148,95 @@ def upsert_player_gameweek_stats(
         stat.transfers_out = raw["transfers_out"]
 
 
+def next_unplayed_event(session: Session) -> int | None:
+    """The gameweek a snapshot taken right now describes the run-up to.
+
+    Read off the fixture list rather than counted forward, so a round that has
+    been wiped out never appears and a part-played one still does. Recorded on
+    the snapshot itself so a backtest can ask for "the state going into GW5"
+    without re-deriving it from a calendar that will have moved on by then.
+    """
+    events = (
+        session.query(Fixture.event)
+        .filter(Fixture.finished.is_(False), Fixture.event.isnot(None))
+        .distinct()
+        .all()
+    )
+    return min((event for (event,) in events), default=None)
+
+
+def _record_player_snapshots(
+    session: Session, captured_at: dt.datetime, captured_on: dt.date, next_event: int | None
+) -> int:
+    existing = {
+        snapshot.player_id: snapshot
+        for snapshot in session.query(PlayerSnapshot).filter(
+            PlayerSnapshot.captured_on == captured_on
+        )
+    }
+    for player in session.query(Player).all():
+        snapshot = existing.get(player.id)
+        if snapshot is None:
+            snapshot = PlayerSnapshot(player_id=player.id, captured_on=captured_on)
+            session.add(snapshot)
+        snapshot.captured_at = captured_at
+        snapshot.next_event = next_event
+        snapshot.now_cost = player.now_cost
+        snapshot.ep_next = player.ep_next
+        snapshot.form = player.form
+        snapshot.selected_by_percent = player.selected_by_percent
+        snapshot.status = player.status
+        snapshot.chance_of_playing_next_round = player.chance_of_playing_next_round
+    return len(session.query(Player).all())
+
+
+def _record_team_snapshots(
+    session: Session, captured_at: dt.datetime, captured_on: dt.date, next_event: int | None
+) -> int:
+    existing = {
+        snapshot.team_id: snapshot
+        for snapshot in session.query(TeamSnapshot).filter(TeamSnapshot.captured_on == captured_on)
+    }
+    teams = session.query(Team).all()
+    for team in teams:
+        snapshot = existing.get(team.id)
+        if snapshot is None:
+            snapshot = TeamSnapshot(team_id=team.id, captured_on=captured_on)
+            session.add(snapshot)
+        snapshot.captured_at = captured_at
+        snapshot.next_event = next_event
+        snapshot.strength_overall_home = team.strength_overall_home
+        snapshot.strength_overall_away = team.strength_overall_away
+        snapshot.strength_attack_home = team.strength_attack_home
+        snapshot.strength_attack_away = team.strength_attack_away
+        snapshot.strength_defence_home = team.strength_defence_home
+        snapshot.strength_defence_away = team.strength_defence_away
+    return len(teams)
+
+
+def record_snapshots(session: Session, captured_at: dt.datetime | None = None) -> int:
+    """Archive today's overwritable player and team fields. Returns rows written.
+
+    Called at the end of every ingest, so the existing daily cron collects this
+    with no change to the schedule. Upserted on the day rather than appended,
+    so running the ingest twice in an afternoon updates that day's row instead
+    of doubling the table — the last read before a deadline is the one that
+    matters, and prices only move once a day anyway.
+
+    Deliberately best-effort at the call site: this is instrumentation for a
+    backtest that does not exist yet, and it must never be the reason a data
+    refresh fails.
+    """
+    captured_at = captured_at or dt.datetime.now(dt.UTC)
+    captured_on = captured_at.date()
+    next_event = next_unplayed_event(session)
+
+    written = _record_player_snapshots(session, captured_at, captured_on, next_event)
+    written += _record_team_snapshots(session, captured_at, captured_on, next_event)
+    session.flush()
+    return written
+
+
 def run_ingest(client: FPLClient | None = None, sleep_between_requests: float = 0.1) -> None:
     """Full pull: teams, players, fixtures, and per-player gameweek history."""
     owns_client = client is None
@@ -159,6 +255,16 @@ def run_ingest(client: FPLClient | None = None, sleep_between_requests: float = 
                 if i % 50 == 0 or i == total:
                     logger.info("Fetched gameweek history for %d/%d players", i, total)
                 time.sleep(sleep_between_requests)
+
+            # Archive the fields this ingest just overwrote. Wrapped because
+            # it is instrumentation for a backtest that doesn't exist yet:
+            # losing a day of snapshots is a nuisance, losing the refresh that
+            # every other feature depends on is not.
+            try:
+                written = record_snapshots(session)
+                logger.info("Recorded %d point-in-time snapshots", written)
+            except Exception:
+                logger.exception("Failed to record snapshots; ingest itself is unaffected")
     finally:
         if owns_client:
             client.close()

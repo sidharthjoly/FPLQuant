@@ -1,7 +1,16 @@
+import datetime as dt
+
 from sqlalchemy.orm import Session
 
 from fplquant.data import ingest
-from fplquant.models.orm import Fixture, Player, PlayerGameweekStat, Team
+from fplquant.models.orm import (
+    Fixture,
+    Player,
+    PlayerGameweekStat,
+    PlayerSnapshot,
+    Team,
+    TeamSnapshot,
+)
 
 from .data.fixtures import (
     ELEMENTS_PAYLOAD,
@@ -76,3 +85,109 @@ def test_a_provisionally_finished_fixture_counts_as_played(db_session: Session) 
     ingest.upsert_fixtures(db_session, payload, teams)
 
     assert db_session.query(Fixture).one().finished is True
+
+
+def test_snapshots_capture_the_fields_ingest_overwrites(db_session: Session) -> None:
+    """These six fields are overwritten on every ingest and FPL publishes no
+    history for them, so a backtest cannot reconstruct them after the fact.
+    That makes the archive the only copy — and one that has to start
+    collecting before it is wanted."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+
+    ingest.record_snapshots(db_session)
+
+    snapshot = db_session.query(PlayerSnapshot).one()
+    player = db_session.query(Player).one()
+    assert snapshot.player_id == player.id
+    assert snapshot.now_cost == player.now_cost
+    assert snapshot.ep_next == player.ep_next
+    assert snapshot.status == player.status
+    assert snapshot.chance_of_playing_next_round == player.chance_of_playing_next_round
+    assert snapshot.form == player.form
+    assert snapshot.selected_by_percent == player.selected_by_percent
+
+
+def test_a_snapshot_survives_the_ingest_that_overwrites_the_player(
+    db_session: Session,
+) -> None:
+    """The whole point: yesterday's price and availability stay readable after
+    today's ingest has replaced them on the player row."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+    yesterday = dt.datetime(2026, 8, 24, 3, 0, tzinfo=dt.UTC)
+    ingest.record_snapshots(db_session, captured_at=yesterday)
+
+    ingest.upsert_players(
+        db_session,
+        [
+            {
+                **ELEMENTS_PAYLOAD[0],
+                "now_cost": 999,
+                "status": "i",
+                "chance_of_playing_next_round": 0,
+            }
+        ],
+        teams,
+    )
+
+    player = db_session.query(Player).one()
+    snapshot = db_session.query(PlayerSnapshot).one()
+    assert player.now_cost == 999 and player.status == "i"
+    assert snapshot.now_cost != 999
+    assert snapshot.status == "a"
+
+
+def test_recording_twice_in_a_day_updates_rather_than_duplicates(db_session: Session) -> None:
+    """Prices move once a day and the ingest can be re-run, so the day is the
+    key. Appending instead would grow the table without adding information."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+    morning = dt.datetime(2026, 8, 25, 3, 0, tzinfo=dt.UTC)
+    evening = dt.datetime(2026, 8, 25, 21, 0, tzinfo=dt.UTC)
+
+    ingest.record_snapshots(db_session, captured_at=morning)
+    db_session.query(Player).one().now_cost = 123
+    db_session.flush()
+    ingest.record_snapshots(db_session, captured_at=evening)
+
+    snapshot = db_session.query(PlayerSnapshot).one()  # one row, not two
+    assert snapshot.now_cost == 123  # the later read wins
+    # SQLite stores no timezone, so this comes back naive — same instant.
+    assert snapshot.captured_at.replace(tzinfo=dt.UTC) == evening
+
+
+def test_a_new_day_gets_its_own_row(db_session: Session) -> None:
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+
+    ingest.record_snapshots(db_session, captured_at=dt.datetime(2026, 8, 25, 3, 0, tzinfo=dt.UTC))
+    ingest.record_snapshots(db_session, captured_at=dt.datetime(2026, 8, 26, 3, 0, tzinfo=dt.UTC))
+
+    assert db_session.query(PlayerSnapshot).count() == 2
+
+
+def test_snapshots_record_the_gameweek_they_lead_into(db_session: Session) -> None:
+    """A backtest asks for "the state going into GW5"; storing it here saves
+    re-deriving it from a fixture calendar that will have moved on."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+    ingest.upsert_fixtures(db_session, [{**FIXTURES_PAYLOAD[0], "event": 3}], teams)
+
+    ingest.record_snapshots(db_session)
+
+    assert db_session.query(PlayerSnapshot).one().next_event == 3
+    assert db_session.query(TeamSnapshot).first().next_event == 3
+
+
+def test_team_strengths_are_archived_too(db_session: Session) -> None:
+    """Currently zero for every club, which is itself the thing worth
+    recording — it is why `engine.rates` falls back to squad value, and a
+    backtest needs to know which prior was in play that week."""
+    ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+
+    ingest.record_snapshots(db_session)
+
+    snapshots = db_session.query(TeamSnapshot).all()
+    assert len(snapshots) == db_session.query(Team).count()
+    assert all(s.captured_on is not None for s in snapshots)

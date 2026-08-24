@@ -186,3 +186,34 @@ The candidate pool is trimmed to the top of each position by projected points,
 plus every owned player unconditionally — several binaries per player per
 gameweek across 600 players is not a tractable program, and the trimmed players
 are by construction ones the objective would never have picked.
+
+
+## Point-in-time snapshots
+
+`Player` and `Team` are current-state rows: `now_cost`, `ep_next`, `status`,
+`chance_of_playing_next_round`, `form`, `selected_by_percent` and the team
+strength ratings are all overwritten on every ingest. The database therefore
+always knows what is true today and never what was true before a past
+deadline.
+
+That is fine for predicting and fatal for checking. A backtest has to rebuild
+the world as it looked before a gameweek, and `chance_of_playing` is a hard
+zero gate on every player's expected points — replaying an old round against
+today's `status` leaks the future in both directions, zeroing out a player who
+actually played and crediting one who was ruled out. The result looks
+plausible and means nothing.
+
+`PlayerGameweekStat` already preserves per-round price and ownership, so those
+are recoverable. Nothing recovers the rest: FPL publishes no history for them.
+`player_snapshots` and `team_snapshots` archive them once per day, upserted on
+the date so re-running an ingest updates that day's row rather than growing the
+table. Each row records `next_event`, the gameweek it leads into, so a backtest
+can ask for "the state going into GW5" directly.
+
+Written at the end of `run_ingest`, inside a `try`, so the existing daily cron
+collects them with no schedule change and a failure here can never break the
+refresh every other feature depends on. Roughly 630 rows a day.
+
+The scoring harness that consumes this doesn't exist yet. The table does,
+because this is the one kind of data that cannot be backfilled — every week
+without it is a week that can never be properly replayed.

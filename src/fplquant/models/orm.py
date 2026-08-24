@@ -147,3 +147,83 @@ class InjuryRecord(Base):
     games_missed: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     player: Mapped[Player] = relationship(back_populates="injury_records")
+
+
+class PlayerSnapshot(Base):
+    """A player's point-in-time state, as FPL published it on one day.
+
+    Every other table here is either immutable history or a current snapshot.
+    `Player` is the latter: `now_cost`, `ep_next`, `status` and
+    `chance_of_playing_next_round` are overwritten on every ingest, so the
+    database always knows what is true today and never what was true on the
+    morning of gameweek five.
+
+    That is fine for making predictions and fatal for checking them. A backtest
+    has to rebuild the world as it looked before a deadline, and replaying an
+    old gameweek against today's `status` leaks the future in both directions:
+    a player who is injured now gets zeroed out for a week he actually played,
+    and one who missed that week but is fit now gets counted as available.
+    `chance_of_playing` is a hard gate on every player's expected points, so a
+    backtest built on it would produce numbers that look plausible and mean
+    nothing.
+
+    `PlayerGameweekStat` already preserves per-round price and ownership, so
+    those are recoverable. The fields here are not recoverable from anywhere —
+    FPL publishes no history for them — which is why this table is append-only
+    and why it has to start collecting before the data is wanted, not when.
+
+    One row per player per day: prices move once daily and deadlines fall in
+    the afternoon, so a day is fine resolution for "the state going into this
+    gameweek", and it bounds the table at roughly 600 rows a day.
+    """
+
+    __tablename__ = "player_snapshots"
+    __table_args__ = (UniqueConstraint("player_id", "captured_on", name="uq_player_snapshot_day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    captured_on: Mapped[dt.date] = mapped_column(index=True)  # the dedup key
+    captured_at: Mapped[dt.datetime]  # the actual moment, for ordering within a day
+    # The gameweek this snapshot describes the run-up to: the next one whose
+    # deadline hasn't passed. What a backtest keys on — "the state going into
+    # GW5" — rather than having to re-derive it from the fixture calendar.
+    next_event: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    now_cost: Mapped[int] = mapped_column(Integer)
+    ep_next: Mapped[float] = mapped_column(Float, default=0.0)
+    form: Mapped[float] = mapped_column(Float, default=0.0)
+    selected_by_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(8), default="a")
+    chance_of_playing_next_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    player: Mapped[Player] = relationship()
+
+
+class TeamSnapshot(Base):
+    """A club's published strength ratings on one day.
+
+    Same problem as `PlayerSnapshot`, one level up. FPL revises these through a
+    season and the ingest overwrites them, so the prior that
+    `fplquant.engine.rates` starts from is unreconstructable after the fact.
+    They are currently zero for every club — which is itself worth recording,
+    since it is the reason the prior falls back to squad value, and a backtest
+    needs to know which of the two was actually in play that week.
+    """
+
+    __tablename__ = "team_snapshots"
+    __table_args__ = (UniqueConstraint("team_id", "captured_on", name="uq_team_snapshot_day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    captured_on: Mapped[dt.date] = mapped_column(index=True)
+    captured_at: Mapped[dt.datetime]
+    next_event: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    strength_overall_home: Mapped[int] = mapped_column(Integer, default=0)
+    strength_overall_away: Mapped[int] = mapped_column(Integer, default=0)
+    strength_attack_home: Mapped[int] = mapped_column(Integer, default=0)
+    strength_attack_away: Mapped[int] = mapped_column(Integer, default=0)
+    strength_defence_home: Mapped[int] = mapped_column(Integer, default=0)
+    strength_defence_away: Mapped[int] = mapped_column(Integer, default=0)
+
+    team: Mapped[Team] = relationship()
