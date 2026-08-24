@@ -7,6 +7,7 @@ import { loadTicker } from "./ticker.js";
 const themeToggle = document.getElementById("theme-toggle");
 const feedLabel = document.getElementById("feed-label");
 const feedNote = document.getElementById("feed-note");
+const pulseDot = document.querySelector(".fq-pulse-dot");
 
 const tickerLoaded = { done: false };
 
@@ -31,9 +32,19 @@ themeToggle.addEventListener("click", () => {
   applyTheme(next);
 });
 
-// Backend health probe — purely cosmetic (the "live"/"demo data" pill and
-// footer note), every real fetch already handles its own errors.
+// Backend health probe — purely cosmetic (the status pill and footer note),
+// every real fetch already handles its own errors.
+//
+// Both outcomes are reported. The label used to fall back to "demo data /
+// showing seeded numbers", which was never true of a failed probe: there is no
+// seeded fallback in the frontend, so an unreachable backend means the panels
+// simply don't load. Saying so is more use than claiming data that isn't there.
 (async () => {
+  const offline = (note) => {
+    feedLabel.textContent = "offline";
+    feedNote.textContent = note;
+    pulseDot?.classList.add("fq-pulse-dot--offline");
+  };
   try {
     const ctl = new AbortController();
     const timeout = setTimeout(() => ctl.abort(), 3500);
@@ -42,9 +53,13 @@ themeToggle.addEventListener("click", () => {
     if (res.ok) {
       feedLabel.textContent = "live";
       feedNote.textContent = "Connected to the live backend";
+    } else {
+      offline(`Backend returned ${res.status} — panels won't load`);
     }
   } catch {
-    /* stays on the "demo data" default */
+    // Also the timeout path: the backend runs on a free-tier VM and can be
+    // slow to wake, so this is worth distinguishing from a hard failure.
+    offline("Backend unreachable — panels won't load");
   }
 })();
 

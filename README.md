@@ -59,9 +59,10 @@ Cloud VM.
 ## Screenshots
 
 The optimizer's starting-XI pitch view uses jersey icons colored by each club's
-real kit. **These are demo data** — the 2026/27 season has not started, so the
-screenshots are seeded with synthetic gameweek history on top of real FPL
-player and team data, not live results.
+real kit. These were captured before the 2026/27 season kicked off, on
+synthetic gameweek history layered over real FPL players and teams. The season
+is under way now, so the numbers on the live site are real results and won't
+match what's shown here. There is no Planner screenshot yet.
 
 <img src="docs/screenshots/optimizer.png" alt="Squad optimizer" width="720" />
 <img src="docs/screenshots/explorer.png" alt="Player explorer" width="720" />

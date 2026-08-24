@@ -58,6 +58,7 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
   width: 6px; height: 6px; border-radius: 50%; background: var(--fq-up); margin-left: 4px;
   animation: fq-pulse 2.4s ease-in-out infinite;
 }
+.fq-pulse-dot--offline { background: var(--fq-dim); animation: none; }
 .fq-feed-label { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fq-faint); }
 
 .fq-nav { position: relative; display: flex; gap: 0; flex: 1; min-width: 0; overflow-x: auto; }
