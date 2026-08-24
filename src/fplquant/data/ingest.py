@@ -87,7 +87,12 @@ def upsert_fixtures(
             by_fpl_id[raw["id"]] = fixture
         fixture.event = raw["event"]
         fixture.kickoff_time = _parse_kickoff(raw["kickoff_time"])
-        fixture.finished = raw["finished"]
+        # FPL only flips `finished` once bonus points are confirmed, which can
+        # lag the final whistle by a day or more; `finished_provisional` goes
+        # true as soon as the match ends. Treat either as played, otherwise a
+        # just-completed gameweek still looks upcoming and every "next fixture"
+        # lookup resolves to a match that has already been played.
+        fixture.finished = bool(raw["finished"] or raw.get("finished_provisional"))
         fixture.team_h_id = teams_by_fpl_id[raw["team_h"]].id
         fixture.team_a_id = teams_by_fpl_id[raw["team_a"]].id
         fixture.team_h_score = raw["team_h_score"]

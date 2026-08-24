@@ -57,3 +57,22 @@ def test_upsert_player_gameweek_stats_is_idempotent(db_session: Session) -> None
     stat = db_session.query(PlayerGameweekStat).one()
     assert stat.total_points == 6
     assert stat.expected_goals_conceded == 0.8
+
+
+def test_a_provisionally_finished_fixture_counts_as_played(db_session: Session) -> None:
+    """FPL leaves `finished` false until bonus points are confirmed, which can
+    lag the final whistle by a day. Without reading `finished_provisional` too,
+    a gameweek that has just been played still looks upcoming, and every
+    "next fixture" lookup resolves to a match already in the books."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    payload = [
+        {
+            **FIXTURES_PAYLOAD[0],
+            "finished": False,
+            "finished_provisional": True,
+        }
+    ]
+
+    ingest.upsert_fixtures(db_session, payload, teams)
+
+    assert db_session.query(Fixture).one().finished is True
