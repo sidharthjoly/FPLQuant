@@ -33,6 +33,9 @@ Cloud VM.
   objective.
 - **Fixture-adjusted predictions** — opponent strength, venue, and playing
   chance folded into expected points.
+- **Lineup and rotation** — club formations inferred from who actually gets
+  picked, plus rest days and minutes load, combined into a start-probability
+  nudge on expected points.
 - **Transfer planner** — pulls a real FPL team by ID and recommends
   transfers, accounting for -4 point hits, wildcards, and free hits.
 - **Player similarity** — per-90 stat vectors, cosine k-NN, and PCA/t-SNE
@@ -66,14 +69,26 @@ uv run fplquant-optimize      # select an optimal 15-man squad within budget
 uv run fplquant-api           # serve the dashboard at http://localhost:8000
 ```
 
-### Preseason behaviour
+### Early-season behaviour
 
 Anything derived from per-gameweek history — the form leaderboard, the market
 layer, and player similarity — is empty until matches have been played, since
-the FPL API only publishes gameweek history once the season is underway. The
-optimizer is the exception: it falls back to FPL's own `ep_next` estimate for
-players without history, and switches to the EWMA-based `points_form` once
-that data exists.
+the FPL API only publishes gameweek history once the season is underway.
+
+Predictions handle the same scarcity by *credibility weighting* rather than by
+switching over at some threshold. A player's EWMA form is blended toward FPL's
+own `ep_next` in proportion to how many appearances back it, so with no history
+the estimate is pure `ep_next`, and form takes over as evidence accumulates.
+This matters more than it sounds: after one gameweek a player's EWMA form is
+exactly that gameweek's score, so taken at face value it would have the
+optimizer rebuild the whole squad around last week's highest scorers.
+
+The lineup signals behave the same way. Inferred formations are shrunk toward a
+4-4-2 prior, start rates toward a positional prior, and the rotation adjustment
+is expressed as a multiplier centred on 1.0 that does nothing at all until
+there is something to say. Early in the season the part that actually carries
+information is rest days, which come from the fixture calendar rather than from
+match history.
 
 ## Commands
 
@@ -84,6 +99,7 @@ that data exists.
 | `fplquant-form` | Print the EWMA form leaderboard |
 | `fplquant-optimize` | Select an optimal 15-man squad and starting XI |
 | `fplquant-risk` | Print the injury risk leaderboard |
+| `fplquant-lineup` | Next-match start probabilities, rest, and inferred club formations |
 | `fplquant-market` | Price/ownership momentum, volatility, and teammate correlation |
 | `fplquant-similar` | Find players most similar to a given player |
 | `fplquant-projection` | Export a PCA/t-SNE projection of the player space |
@@ -100,6 +116,9 @@ uv run fplquant-optimize --budget 100.0 --max-per-club 3
 # Risk-adjusted: maximizes expected_points * (1 - injury_risk) / (1 + volatility
 # penalty) instead of raw expected points — see src/fplquant/risk/adjusted.py
 uv run fplquant-optimize --risk-adjusted --risk-aversion 1.0 --injury-weight 1.0
+
+uv run fplquant-lineup                                # start probabilities
+uv run fplquant-lineup --shapes                       # inferred club formations
 
 uv run fplquant-similar "Haaland"                     # most similar players
 uv run fplquant-similar "Haaland" --cheaper-only      # cheaper alternatives
@@ -165,6 +184,7 @@ src/fplquant/
   models/           SQLAlchemy ORM models + engine/session setup
   data/             FPL API client + ingestion pipeline
   form/             EWMA-based form scoring (points + underlying stats)
+  lineup/           inferred formations, start probability, fatigue
   optimizer/        ILP squad selection (PuLP), budget/position/club constraints
   risk/             injury risk scoring + risk-adjusted expected points
   market/           price/ownership momentum, volatility, teammate correlation

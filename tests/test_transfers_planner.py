@@ -1,5 +1,8 @@
 import pytest
+from sqlalchemy.orm import Session
 
+from fplquant.models.orm import Player, PlayerGameweekStat, Team
+from fplquant.optimizer.candidates import build_candidates_from_db
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER, PlayerCandidate
 from fplquant.transfers.planner import propose_transfers
 
@@ -173,3 +176,89 @@ def test_resulting_squad_and_starting_xi_are_well_formed() -> None:
     assert len(plan.resulting_squad.players) == 15
     assert len(plan.starting_xi.starters) == 11
     assert len(plan.starting_xi.bench) == 4
+
+
+def _seed_league_after_one_gameweek(session: Session) -> list[Player]:
+    """A player pool with exactly one gameweek played, in which a handful of
+    players hauled and everyone else returned a typical low score."""
+    teams = []
+    for team_id in range(1, 21):
+        team = Team(fpl_id=team_id, name=f"Club {team_id}", short_name=f"C{team_id:02d}")
+        session.add(team)
+        teams.append(team)
+    session.flush()
+
+    players = []
+    fpl_id = 1
+    for team in teams:
+        for position, count in [(GOALKEEPER, 2), (DEFENDER, 5), (MIDFIELDER, 5), (FORWARD, 3)]:
+            for _ in range(count):
+                player = Player(
+                    fpl_id=fpl_id,
+                    team_id=team.id,
+                    first_name="P",
+                    second_name=str(fpl_id),
+                    web_name=f"P{fpl_id}",
+                    element_type=position,
+                    now_cost=50,
+                    ep_next=4.0,
+                    status="a",
+                )
+                session.add(player)
+                players.append(player)
+                fpl_id += 1
+    session.flush()
+
+    # Every 20th player hauled 15 in GW1; everyone else scored an ordinary 2.
+    for index, player in enumerate(players):
+        session.add(
+            PlayerGameweekStat(
+                player_id=player.id,
+                round=1,
+                minutes=90,
+                total_points=15 if index % 20 == 0 else 2,
+            )
+        )
+    session.flush()
+    return players
+
+
+def test_one_gameweek_of_history_does_not_trigger_a_wholesale_rebuild(
+    db_session: Session,
+) -> None:
+    """The GW2 blow-up: with a single gameweek on record, a player's raw EWMA
+    form *is* that gameweek's score, so last week's team of the week looks
+    enormously better than anyone else and the solver happily takes a -56 hit
+    to buy all of them. Shrinking form toward the prior keeps one week of
+    evidence in proportion.
+    """
+    _seed_league_after_one_gameweek(db_session)
+    candidates = build_candidates_from_db(db_session)
+    by_id = {c.player_id: c for c in candidates}
+
+    # A squad of players who all blanked in GW1 — the worst realistic case for
+    # churn, since every haul in the pool is a candidate upgrade. Built
+    # respecting the max-3-per-club rule, so any transfer the solver proposes
+    # is one it actually wants, not one forced by an illegal starting squad.
+    blanked = [c for c in candidates if by_id[c.player_id].predicted_points < 4.0]
+    squad: list[PlayerCandidate] = []
+    per_club: dict[int, int] = {}
+    for position, count in [(GOALKEEPER, 2), (DEFENDER, 5), (MIDFIELDER, 5), (FORWARD, 3)]:
+        taken = 0
+        for c in blanked:
+            if taken == count:
+                break
+            if c.element_type != position or per_club.get(c.team_id, 0) >= 3:
+                continue
+            squad.append(c)
+            per_club[c.team_id] = per_club.get(c.team_id, 0) + 1
+            taken += 1
+        assert taken == count, f"could not fill {count} of position {position}"
+
+    plan = propose_transfers(squad, candidates, bank=0, free_transfers=1)
+
+    assert plan.transfers_made <= 2, (
+        f"one gameweek of data triggered {plan.transfers_made} transfers "
+        f"for a {plan.hit_cost}-point hit"
+    )
+    assert plan.hit_cost <= 4

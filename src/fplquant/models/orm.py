@@ -99,6 +99,10 @@ class PlayerGameweekStat(Base):
     kickoff_time: Mapped[dt.datetime | None] = mapped_column(nullable=True)
 
     minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # Whether the player was in the starting XI. Nullable because rows ingested
+    # before this column existed have no value — see lineup.starts.did_start for
+    # the minutes-based fallback used in that case.
+    starts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_points: Mapped[int] = mapped_column(Integer, default=0)
     goals_scored: Mapped[int] = mapped_column(Integer, default=0)
     assists: Mapped[int] = mapped_column(Integer, default=0)

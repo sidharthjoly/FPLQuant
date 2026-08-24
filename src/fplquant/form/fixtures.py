@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from fplquant.form.scoring import predicted_points_by_player
-from fplquant.models.orm import Fixture, Player, Team
+from fplquant.lineup.starts import lineup_multipliers_by_player
+from fplquant.models.orm import Player, Team
 from fplquant.optimizer.types import DEFENDER, GOALKEEPER
+from fplquant.schedule import get_next_fixture_by_team
 
 # Clamp the opponent-strength multiplier so a single very strong/weak opponent
 # can't swing a player's expected points more than this — the FDR-style signal
@@ -25,27 +27,8 @@ class FixtureAdjustedScore:
     difficulty: int | None  # FPL's own 1 (easiest) - 5 (hardest) rating for this fixture
     fixture_multiplier: float | None  # our own continuous opponent-strength multiplier
     chance_of_playing: float  # 0.0-1.0
-    adjusted_points: float  # base_points * fixture_multiplier * chance_of_playing
-
-
-def get_next_fixture_by_team(session: Session) -> dict[int, Fixture]:
-    """Each team's next unplayed fixture, keyed by team_id.
-
-    Ordered by kickoff time so this is genuinely the *next* match, not just
-    any upcoming one. Teams with no unplayed fixture scheduled yet (e.g. a
-    blank gameweek before the next round is confirmed) are simply absent.
-    """
-    fixtures = (
-        session.query(Fixture)
-        .filter(Fixture.finished.is_(False), Fixture.kickoff_time.isnot(None))
-        .order_by(Fixture.kickoff_time.asc())
-        .all()
-    )
-    next_by_team: dict[int, Fixture] = {}
-    for fixture in fixtures:
-        for team_id in (fixture.team_h_id, fixture.team_a_id):
-            next_by_team.setdefault(team_id, fixture)
-    return next_by_team
+    lineup_multiplier: float  # rotation/rest nudge; 1.0 when we know nothing
+    adjusted_points: float  # base * fixture_multiplier * chance_of_playing * lineup_multiplier
 
 
 def _league_average_strengths(teams: list[Team]) -> tuple[float, float]:
@@ -123,8 +106,17 @@ def compute_fixture_adjusted_scores(
     This is the "will this player have a good game against this opponent at
     this venue" signal, built on top of the season-form baseline from
     `fplquant.form.scoring.predicted_points_by_player`.
+
+    Two separate availability terms apply here and they are not redundant.
+    `chance_of_playing` is the hard news gate — injured or suspended means zero,
+    and it must stay hard. `lineup_multiplier` is the soft rotation nudge from
+    `fplquant.lineup.starts`: given that they're fit, is this a week they're
+    more or less likely than usual to be picked, on the evidence of their rest
+    and their side's shape. It is centred on 1.0 and does nothing until there's
+    something to say.
     """
     base_points = predicted_points_by_player(session, halflife)
+    lineup_by_player = lineup_multipliers_by_player(session)
     next_fixture_by_team = get_next_fixture_by_team(session)
     teams_by_id = {t.id: t for t in session.query(Team).all()}
     league_avg_attack, league_avg_defence = _league_average_strengths(list(teams_by_id.values()))
@@ -134,6 +126,7 @@ def compute_fixture_adjusted_scores(
         base = base_points.get(player.id, 0.0)
         fixture = next_fixture_by_team.get(player.team_id)
         play_prob = chance_of_playing(player)
+        lineup = lineup_by_player.get(player.id, 1.0)
 
         if fixture is None:
             # No fixture data to adjust by (a genuine blank gameweek, or
@@ -153,7 +146,8 @@ def compute_fixture_adjusted_scores(
                     difficulty=None,
                     fixture_multiplier=None,
                     chance_of_playing=play_prob,
-                    adjusted_points=base * play_prob,
+                    lineup_multiplier=lineup,
+                    adjusted_points=base * play_prob * lineup,
                 )
             )
             continue
@@ -181,7 +175,8 @@ def compute_fixture_adjusted_scores(
                 difficulty=difficulty,
                 fixture_multiplier=multiplier,
                 chance_of_playing=play_prob,
-                adjusted_points=base * multiplier * play_prob,
+                lineup_multiplier=lineup,
+                adjusted_points=base * multiplier * play_prob * lineup,
             )
         )
     return sorted(scores, key=lambda s: s.adjusted_points, reverse=True)

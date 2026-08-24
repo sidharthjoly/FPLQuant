@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy.orm import Session
 
 from fplquant.models.orm import Player, PlayerGameweekStat, Team
@@ -61,7 +62,10 @@ def test_prefers_points_form_when_history_exists(db_session: Session) -> None:
 
     candidates = build_candidates_from_db(db_session)
 
-    assert candidates[0].predicted_points == 8.0
+    # Form pulls the estimate well above the deliberately low ep_next, but is
+    # shrunk toward it in proportion to the three appearances behind it:
+    # 8.0 * 3/9 + 1.0 * 6/9. See form.scoring.predicted_points_by_player.
+    assert candidates[0].predicted_points == pytest.approx(3.0 + 1.0 / 3.0)
 
 
 def test_excludes_unavailable_players_by_default(db_session: Session) -> None:

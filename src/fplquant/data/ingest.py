@@ -114,6 +114,7 @@ def upsert_player_gameweek_stats(
         stat.was_home = raw["was_home"]
         stat.kickoff_time = _parse_kickoff(raw["kickoff_time"])
         stat.minutes = raw["minutes"]
+        stat.starts = raw.get("starts")
         stat.total_points = raw["total_points"]
         stat.goals_scored = raw["goals_scored"]
         stat.assists = raw["assists"]

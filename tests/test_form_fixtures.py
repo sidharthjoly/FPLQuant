@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from fplquant.form.fixtures import (
     chance_of_playing,
     compute_fixture_adjusted_scores,
-    get_next_fixture_by_team,
 )
 from fplquant.models.orm import Fixture, Player, PlayerGameweekStat, Team
+from fplquant.schedule import get_next_fixture_by_team
 
 GKP, DEF, MID, FWD = 1, 2, 3, 4
 
@@ -272,10 +272,15 @@ def test_players_with_gameweek_history_use_form_not_ep_next(db_session: Session)
     player = _player(db_session, team, fpl_id=1, web_name="HasForm", ep_next=1.0)
     for round_number, pts in enumerate([10, 10, 10], start=1):
         db_session.add(
-            PlayerGameweekStat(player_id=player.id, round=round_number, total_points=pts)
+            PlayerGameweekStat(
+                player_id=player.id, round=round_number, minutes=90, total_points=pts
+            )
         )
     db_session.flush()
 
     score = compute_fixture_adjusted_scores(db_session)[0]
 
-    assert score.base_points > 1.0  # driven by the points history, not the low ep_next
+    # Three appearances is a third of the way to full credibility, so the
+    # estimate has moved most of the way from the low ep_next toward the
+    # points history without landing on it: 10 * 3/9 + 1.0 * 6/9.
+    assert score.base_points == pytest.approx(4.0)
