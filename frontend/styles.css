@@ -460,3 +460,64 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
   max-width: 1180px; margin: 0 auto; padding: 22px 28px; display: flex; justify-content: space-between;
   align-items: center; font-size: 12px; color: var(--fq-faint); flex-wrap: wrap; gap: 6px;
 }
+
+/* ============ Planner ============ */
+.fq-field__optional { color: var(--fq-faint); text-transform: none; letter-spacing: 0; font-size: 10px; }
+.fq-chip-picker { display: flex; flex-direction: column; gap: 8px; }
+.fq-chip-picker .fq-field--checkbox { display: flex; }
+
+/* The plan's shape, left to right. Scrolls horizontally rather than wrapping:
+   a plan is a sequence, and wrapping it onto a second row breaks the one thing
+   the layout is there to communicate. */
+.fq-timeline {
+  display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 22px;
+  scroll-snap-type: x proximity;
+}
+.fq-tl-card {
+  flex: 0 0 208px; scroll-snap-align: start; text-align: left; font: inherit; cursor: pointer;
+  border: 1px solid var(--fq-line); border-radius: 13px; background: var(--fq-surf);
+  padding: 14px 15px; color: var(--fq-text);
+  display: flex; flex-direction: column; gap: 9px;
+  transition: border-color 240ms ease, transform 260ms cubic-bezier(.16,1,.3,1), background 240ms ease;
+}
+.fq-tl-card:hover { transform: translateY(-2px); border-color: var(--fq-line-2); }
+.fq-tl-card.is-selected { border-color: var(--fq-accent); background: var(--fq-surf-2); }
+/* The only week you actually execute. */
+.fq-tl-card--now { border-color: color-mix(in srgb, var(--fq-accent) 45%, transparent); }
+
+.fq-tl-card__head { display: flex; align-items: center; justify-content: space-between; }
+.fq-tl-card__gw { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fq-faint); }
+.fq-tl-card__now {
+  font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fq-accent-hi); background: var(--fq-accent-soft); padding: 2px 6px; border-radius: 4px;
+}
+.fq-tl-card__points { font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.fq-tl-card__track { height: 3px; border-radius: 2px; background: var(--fq-line); overflow: hidden; }
+.fq-tl-card__fill {
+  height: 100%; border-radius: 2px; background: var(--fq-accent);
+  transition: width 520ms cubic-bezier(.16,1,.3,1);
+}
+.fq-tl-chip {
+  align-self: flex-start; font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--fq-warn); background: color-mix(in srgb, var(--fq-warn) 14%, transparent);
+  padding: 3px 7px; border-radius: 5px;
+}
+.fq-tl-card__moves { display: flex; flex-direction: column; gap: 4px; font-size: 12px; min-height: 18px; }
+.fq-tl-card__moves--none { color: var(--fq-faint); font-size: 12px; }
+.fq-tl-move { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
+.fq-tl-move__out { color: var(--fq-down); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fq-tl-move__arrow { color: var(--fq-faint); flex: 0 0 auto; }
+.fq-tl-move__in { color: var(--fq-up); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fq-tl-card__foot {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 11.5px; color: var(--fq-dim); border-top: 1px solid var(--fq-line); padding-top: 8px;
+}
+.fq-tl-card__blank { font-size: 11px; color: var(--fq-faint); }
+.fq-tl-badge {
+  margin-left: 6px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--fq-accent-hi); background: var(--fq-accent-soft); padding: 1px 5px; border-radius: 4px;
+}
+
+@media (max-width: 700px) {
+  .fq-tl-card { flex-basis: 176px; }
+}

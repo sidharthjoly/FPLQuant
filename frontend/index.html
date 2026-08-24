@@ -24,6 +24,7 @@
         <button class="fq-nav__btn" data-tab="explorer" role="tab" aria-selected="false">Explorer</button>
         <button class="fq-nav__btn" data-tab="ticker" role="tab" aria-selected="false">Market</button>
         <button class="fq-nav__btn" data-tab="transfers" role="tab" aria-selected="false">Transfers</button>
+        <button class="fq-nav__btn" data-tab="planner" role="tab" aria-selected="false">Planner</button>
       </nav>
 
       <button class="fq-theme-toggle" id="theme-toggle" aria-label="Toggle theme">
@@ -372,6 +373,102 @@
         </div>
       </div>
     </section>
+
+    <!-- ===================== PLANNER ===================== -->
+    <section class="panel" id="panel-planner" role="tabpanel">
+      <div class="fq-layout-sidebar">
+        <form class="fq-sidebar" id="planner-form">
+          <div class="fq-sidebar__kicker">Plan ahead</div>
+          <div class="fq-sidebar__body">
+            <div class="fq-field">
+              <span class="fq-field__label">How far ahead</span>
+              <div class="fq-seg" id="horizon-seg">
+                <button type="button" class="fq-seg__btn" data-horizon="3">3 GW</button>
+                <button type="button" class="fq-seg__btn active" data-horizon="5">5 GW</button>
+                <button type="button" class="fq-seg__btn" data-horizon="8">8 GW</button>
+              </div>
+            </div>
+
+            <div class="fq-field">
+              <span class="fq-field__label">Budget</span>
+              <div class="fq-money-input">
+                <span>£</span>
+                <input type="number" id="planner-budget" name="budget" value="100.0" step="0.1" min="50" max="120" />
+                <span>m</span>
+              </div>
+            </div>
+
+            <div class="fq-field-row">
+              <label class="fq-field">
+                <span class="fq-field__label">Max per club</span>
+                <select class="fq-select" id="planner-max-per-club" name="max_per_club">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3" selected>3</option>
+                </select>
+              </label>
+              <label class="fq-field">
+                <span class="fq-field__label">Free transfers</span>
+                <select class="fq-select" id="planner-free-transfers" name="free_transfers">
+                  <option value="0">0</option>
+                  <option value="1" selected>1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </label>
+            </div>
+
+            <label class="fq-field">
+              <span class="fq-field__label">Your FPL team ID <span class="fq-field__optional">optional</span></span>
+              <input class="fq-text-input" type="number" id="planner-team-id" name="fpl_team_id" min="1" step="1" placeholder="Leave blank to build from scratch" />
+            </label>
+
+            <div class="fq-field">
+              <span class="fq-field__label">Chips it may schedule</span>
+              <div class="fq-chip-picker">
+                <label class="fq-field--checkbox"><input type="checkbox" id="chip-wildcard" value="wildcard" /> Wildcard</label>
+                <label class="fq-field--checkbox"><input type="checkbox" id="chip-bench-boost" value="bench_boost" /> Bench Boost</label>
+                <label class="fq-field--checkbox"><input type="checkbox" id="chip-triple-captain" value="triple_captain" /> Triple Captain</label>
+              </div>
+            </div>
+
+            <button type="submit" class="fq-btn-primary" id="planner-btn">
+              <span class="fq-btn-primary__label" id="planner-label">Plan my season</span>
+            </button>
+            <div class="fq-hint">Every gameweek is solved together, so banking a transfer this week counts for what it buys you next week.</div>
+          </div>
+        </form>
+
+        <div>
+          <div id="planner-status" class="status" aria-live="polite"></div>
+
+          <div id="planner-results" hidden>
+            <div class="fq-kpi-grid" id="planner-kpis"></div>
+            <div class="fq-verdict" id="planner-verdict"></div>
+
+            <div class="fq-section-kicker">Gameweek by gameweek</div>
+            <div class="fq-timeline" id="planner-timeline"></div>
+
+            <div class="fq-card" id="planner-squad-card">
+              <div class="fq-card__head">
+                <span class="fq-card__kicker" id="planner-squad-kicker">Squad</span>
+                <span class="fq-card__note" id="planner-squad-note"></span>
+              </div>
+              <div class="fq-section-kicker">Starting XI</div>
+              <div class="fq-dugout__row" id="planner-xi" style="flex-wrap: wrap; margin-bottom: 18px"></div>
+              <div class="fq-section-kicker">Bench</div>
+              <div class="fq-dugout__row" id="planner-bench" style="flex-wrap: wrap"></div>
+            </div>
+          </div>
+
+          <div id="planner-empty" class="empty-state">
+            <p>Pick a horizon and hit plan. Every gameweek is solved as one problem — transfers, captaincy, and chip timing together — so the plan can bank a transfer now to spend it on a double gameweek later.</p>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer class="fq-footer">
@@ -387,6 +484,7 @@
   <script type="module" src="kits.js"></script>
   <script type="module" src="optimizer.js"></script>
   <script type="module" src="transfers.js"></script>
+  <script type="module" src="planner.js"></script>
   <script type="module" src="explorer.js"></script>
   <script type="module" src="ticker.js"></script>
   <script type="module" src="main.js"></script>

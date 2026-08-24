@@ -41,5 +41,11 @@ export const api = {
     request("/optimize", { method: "POST", body: JSON.stringify(payload) }),
   planTransfers: (payload) =>
     request("/transfers/plan", { method: "POST", body: JSON.stringify(payload) }),
+  getProjections: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return request(`/projections${qs ? `?${qs}` : ""}`);
+  },
+  planHorizon: (payload) =>
+    request("/plan", { method: "POST", body: JSON.stringify(payload) }),
   getNextDeadline: () => request("/meta/next-deadline"),
 };

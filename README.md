@@ -28,21 +28,33 @@ Cloud VM.
   history combined into a per-player risk score.
 - **Market layer** — price and ownership momentum, points volatility, and
   teammate correlation, computed from per-gameweek time series.
+- **Points engine** — fitted team goal rates, allocated top-down to players,
+  scored through FPL's actual scoring table. Produces a per-rule breakdown and
+  a full distribution rather than a single number.
+- **Multi-gameweek horizon** — projections fixture by fixture over the next N
+  rounds, including double and blank gameweeks.
 - **Squad optimizer** — ILP selection (PuLP) under budget, position, and
   club-count constraints, with an optional Sharpe-style risk-adjusted
   objective.
+- **Multi-period planner** — one integer program over the whole horizon:
+  squad, starting XI, captain, transfers, free-transfer banking, hits, and
+  chip timing, all as decision variables.
+- **Monte Carlo** — gameweeks simulated match by match, so teammates correlate
+  structurally. Gives floors, ceilings, haul odds, and squad-level risk.
 - **Fixture-adjusted predictions** — opponent strength, venue, and playing
   chance folded into expected points.
 - **Lineup and rotation** — club formations inferred from who actually gets
   picked, plus rest days and minutes load, combined into a start-probability
-  nudge on expected points.
+  nudge on expected points, and surfaced per player as odds to be named in the
+  XI (with the fitness news applied as a hard gate on top).
 - **Transfer planner** — pulls a real FPL team by ID and recommends
   transfers, accounting for -4 point hits, wildcards, and free hits.
 - **Player similarity** — per-90 stat vectors, cosine k-NN, and PCA/t-SNE
   projections for finding comparable or cheaper alternatives.
 - **API and dashboard** — FastAPI backend with Redis caching, plus a
   no-build-step frontend (optimizer, player explorer, market ticker,
-  transfers).
+  transfers, and a multi-gameweek planner). Every player shown anywhere — on the pitch, in the dugout, in a
+  transfer suggestion, on the market tape — opens their explorer profile.
 
 ## Screenshots
 
@@ -90,6 +102,14 @@ there is something to say. Early in the season the part that actually carries
 information is rest days, which come from the fixture calendar rather than from
 match history.
 
+The points engine follows the same discipline one level up. Team goal rates
+start at a prior and are moved by the match record in proportion to how many
+matches back it; player scoring rates start at a price-implied prior and give
+way to a player's own per-90 numbers as minutes accumulate; and start
+probabilities start at a softmax over price and give way to who actually gets
+picked. None of it switches over at a threshold — with an empty database the
+whole engine still produces a usable projection, built entirely from priors.
+
 ## Commands
 
 | Command | Description |
@@ -103,6 +123,8 @@ match history.
 | `fplquant-market` | Price/ownership momentum, volatility, and teammate correlation |
 | `fplquant-similar` | Find players most similar to a given player |
 | `fplquant-projection` | Export a PCA/t-SNE projection of the player space |
+| `fplquant-project` | Multi-gameweek expected points, with team ratings and simulation |
+| `fplquant-plan` | Plan squad, transfers, captaincy, and chips over a horizon |
 | `fplquant-api` | Run the FastAPI backend and dashboard |
 
 Injury ingestion is deliberately separate from the main ingest: it scrapes
@@ -123,6 +145,17 @@ uv run fplquant-lineup --shapes                       # inferred club formations
 uv run fplquant-similar "Haaland"                     # most similar players
 uv run fplquant-similar "Haaland" --cheaper-only      # cheaper alternatives
 uv run fplquant-projection --method pca --output player_projection.json
+
+# Multi-gameweek projections. Blanks show as "—", doubles as "*"
+uv run fplquant-project --horizon 5
+uv run fplquant-project --ratings                     # fitted team goal rates
+uv run fplquant-project --simulate --seed 1           # floors, ceilings, haul odds
+uv run fplquant-project --explain "Haaland"           # the model's full reasoning
+
+# Plan a horizon, letting the solver decide when to play the chips
+uv run fplquant-plan --horizon 5
+uv run fplquant-plan --team-id 1234567 --free-transfers 2 \
+    --chips wildcard bench_boost triple_captain
 ```
 
 Alongside the 15-man squad, both the CLI and the `/optimize` endpoint return a
@@ -132,6 +165,133 @@ starting XI: the best of FPL's eight legal formations for that squad
 vice-captain, and the point value of playing Bench Boost or Triple Captain that
 week.
 
+## The points engine
+
+The original expected-points model is an EWMA of a player's past FPL points,
+multiplied by a fixture-difficulty factor. That is a reasonable first pass and
+it has a structural problem: points are a *consequence*, not a quantity in
+their own right. A defender's expected points are dominated by the probability
+their side keeps a clean sheet, which is a property of the opponent's attack
+and has nothing to do with the defender's own scoring history — so scaling
+their past points by one blunt multiplier moves the wrong term.
+
+[`src/fplquant/engine/`](src/fplquant/engine/) models the components instead,
+top-down, in four layers.
+
+**Team goal rates** ([`rates.py`](src/fplquant/engine/rates.py)) fit each club's
+attacking and defensive multipliers from the results so far, as a damped
+multiplicative fixed point: given what the model currently believes about the
+opponents a club faced, how many goals *should* they have scored, and how many
+did they? Because each club's correction depends on its opponents' current
+ratings, the passes are iterated until they settle, so beating three
+relegation candidates is not mistaken for beating the top three. Expected goals
+carry more weight than the scoreline, since xG settles over a handful of games
+where goals take most of a season.
+
+Fitting forty parameters against a dozen matches is underdetermined, not merely
+noisy, so the multipliers start at a prior and the record moves them by a
+credibility weight. The prior is itself two readings blended: FPL's published
+team ratings, and the combined price of a club's fifteen most expensive
+players. The second is there because the first is unreliable — FPL's granular
+`strength_attack_*` columns are **zero for every club** for much of preseason,
+and the coarse `strength_overall_*` rating has four distinct values across
+twenty clubs. Squad value is continuous, never missing, and reprices itself.
+
+**Minutes** ([`minutes.py`](src/fplquant/engine/minutes.py)) estimate the
+absolute probability of starting, under the constraint that a club starts
+exactly eleven players: probabilities within a position group are normalised to
+the slots that group's inferred formation fills. That constraint is what makes
+the estimate self-correcting — an injury to a first-choice striker
+redistributes his minutes to the rest of the forward line rather than
+evaporating. The prior is a softmax over price within each club's position
+group, since FPL prices are compressed but their ordering is informative.
+
+**Usage** ([`usage.py`](src/fplquant/engine/usage.py)) splits a club's goals
+among its players by credibility-shrunk per-90 rates, normalised so the shares
+sum to one. The model is therefore internally consistent: sum a club's players'
+expected goals for a fixture and the club's expected goals come back out.
+
+**Scoring** ([`scoring.py`](src/fplquant/engine/scoring.py)) converts all of
+that into points through FPL's rules — clean sheet probability as `exp(-λ)`
+gated on 60 minutes, the goals-conceded penalty as `E[floor(K/2)]` rather than
+`floor(E[K]/2)`, saves from the opponent's rate, bonus from BPS history.
+
+`fplquant-project --explain` prints the whole chain for one player:
+
+```
+Gonzalo (FUL, £6.0m)
+  starts 97% of the time, 82 expected minutes; rate estimate is 0% their own
+  record, the rest price-implied
+  takes 23.4% of their club's goals and 13.2% of the assists, at 0.34 goals
+  and 0.12 assists per 90
+  GW2 vs SUN (A): 3.82 pts  [xG for 1.39, against 1.41, clean sheet 24%]
+      appearance +1.83  goals +1.30  assists +0.40  clean sheet +0.00
+      conceded +0.00  saves +0.00  bonus +0.40  cards -0.12
+```
+
+### Simulation
+
+[`simulate.py`](src/fplquant/engine/simulate.py) samples a gameweek match by
+match: both sides' goals are drawn from the fitted Poisson rates, then
+allocated to players by a multinomial over the usage shares. Because every
+player in a match reads the same two draws, teammate correlation is
+*structural* rather than estimated — a defender's clean sheet and his
+goalkeeper's arrive in the same simulations, and a squad's variance reflects
+that three defenders from one club are one bet held three times. It also
+double-checks the model: the sampler and the closed form are independent
+implementations, and their means agree to within a few hundredths of a point
+across the whole player pool ([`tests/test_engine_simulate.py`](tests/test_engine_simulate.py)).
+
+### Multi-period planning
+
+A single-gameweek solver will take a -4 for one good fixture, sell the player
+next week for another -4, and never notice that banking the free transfer would
+have got the same squad for nothing. It cannot value a free transfer, because a
+free transfer is worth exactly the flexibility it gives you *later*, and later
+is not in its model.
+
+[`multiperiod.py`](src/fplquant/optimizer/multiperiod.py) solves the whole
+horizon as one integer program. Squad membership, the starting XI, the captain,
+transfers, hits, and the free-transfer balance are all variables indexed by
+gameweek, tied together by a flow constraint — this week's squad is last week's,
+plus what you bought, minus what you sold. Chips are opt-in binaries the solver
+places wherever they are worth most, which is a question a one-week model cannot
+even ask: knowing which week to triple-captain requires looking at all of them
+together.
+
+Choosing the XI *inside* the optimization is a real improvement on the
+single-gameweek path, which maximizes the 15-man total and then picks an XI from
+whatever it bought — that values a fourth goalkeeper the same as a first-choice
+striker.
+
+Only the first gameweek's moves are meant to be executed; re-solve once the next
+round's news lands. That is model predictive control, and it is why later
+gameweeks are discounted in the objective.
+
+```
+$ uv run fplquant-plan --horizon 5 --chips wildcard bench_boost triple_captain
+Horizon GW1-GW5 · 231.1 expected points · 0 points of hits · solver Optimal
+
+GW4  57.1 pts  3-4-3  [BENCH BOOST]
+  free transfers 2
+  OUT Wirtz            (3.31)   IN Isak             (5.20)
+  C Isak, VC Haaland
+```
+
+The Planner tab in the dashboard shows the same plan as a timeline — one card
+per gameweek, the first one highlighted because it is the only one you act on —
+and clicking a card shows the fifteen you would own that week.
+
+One chip per gameweek is a constraint, not an assumption. Without it the solver
+stacks them: a wildcard makes a whole squad's transfers free, a bench boost then
+scores the bench it just bought, and all three pile into the week with the best
+fixtures, producing a plan worth more points than any you are allowed to play.
+
+Known approximations, all deliberate: prices are held constant across the
+horizon, so it cannot plan around price rises; selling fees are not modelled;
+and the pool is trimmed to the top of each position, since several binaries per
+player per gameweek over 600 players is not a tractable program.
+
 ## API
 
 ```bash
@@ -139,7 +299,14 @@ uv run fplquant-api    # http://localhost:8000
 ```
 
 The dashboard is served at `/`, with Optimizer, Player Explorer, Market
-Ticker, and Transfers tabs. Auto-generated interactive docs are at `/docs` (Swagger) and
+Ticker, Transfers, and Planner tabs. The horizon endpoints are `GET
+/projections` (with optional `simulate=true`) and `POST /plan`.
+
+`/plan` is the most expensive thing the API does, so its solve is capped at
+`FPLQUANT_PLAN_SOLVER_TIME_LIMIT_SECONDS` (default 20). The solver keeps the
+best plan it has found when the clock runs out; the CLI's `--time-limit` is
+uncapped by comparison, since a terminal can afford to wait and a shared
+worker cannot. Auto-generated interactive docs are at `/docs` (Swagger) and
 `/redoc`.
 
 Redis is optional. Caching is best-effort: if Redis is unreachable, the API
@@ -173,8 +340,8 @@ This is the same image that runs in production.
 ## Architecture
 
 A FastAPI backend (SQLite plus a Redis cache) is shared by both the CLIs and
-the HTTP API, on top of a fixture-adjusted expected-points model, an ILP squad
-optimizer, and a transfer planner. The frontend is vanilla HTML/CSS/JS with no
+the HTTP API, on top of a Poisson points engine, an ILP squad optimizer, and
+single- and multi-gameweek transfer planners. The frontend is vanilla HTML/CSS/JS with no
 build step. Full write-up in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -189,6 +356,8 @@ src/fplquant/
   risk/             injury risk scoring + risk-adjusted expected points
   market/           price/ownership momentum, volatility, teammate correlation
   similarity/       per-90 stat vectors, cosine k-NN, PCA/t-SNE projection
+  engine/           Poisson points engine: team rates, minutes, usage, scoring,
+                    multi-gameweek horizon, Monte Carlo simulation
   api/              FastAPI backend (routers/, schemas.py, cache.py)
 frontend/           static dashboard (vanilla HTML/CSS/JS, served by the API)
 alembic/            database migrations

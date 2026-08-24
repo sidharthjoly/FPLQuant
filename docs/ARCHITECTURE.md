@@ -124,3 +124,65 @@ Two ways to serve it, both supported:
   changes.
 
 Vanilla HTML/CSS/JS by design: no bundler, no framework, no `npm install`.
+
+## The points engine
+
+`src/fplquant/engine/` replaces "past points × a fixture multiplier" with a
+top-down model of how points actually get scored. Four layers, each usable on
+its own:
+
+```
+rates.py     fitted team attack/leak multipliers -> expected goals per fixture
+minutes.py   absolute start probability, normalised to eleven shirts per club
+usage.py     a club's goals split among its players by shrunk per-90 rates
+scoring.py   FPL's scoring table applied to the above -> points, rule by rule
+horizon.py   the above, per fixture, over N gameweeks (doubles and blanks)
+simulate.py  Monte Carlo over the same structure -> distributions, correlations
+```
+
+The dependency direction is strictly downward: `scoring.py` is pure and imports
+no database, `usage.py` and `minutes.py` read the ORM, and `horizon.py` is the
+only module that walks the fixture calendar. `simulate.py` reads `horizon.py`'s
+output rather than recomputing anything, which is what keeps the sampler and the
+closed form in agreement.
+
+### Where the shrinkage lives
+
+Every layer has a prior and a credibility weight, because the season this is
+most useful in is the one where there is barely any data:
+
+| Layer | Estimate | Prior | Evidence |
+| --- | --- | --- | --- |
+| `rates` | team attack/leak | FPL ratings blended with squad value | matches played, decayed by gameweek |
+| `minutes` | start probability | softmax over price within the position group | matches started |
+| `usage` | goals and assists per 90 | league rate scaled by price | minutes played |
+| `usage` | bonus per appearance | implied by expected involvements | appearances |
+
+The blend is a credibility weight `n / (n + k)` throughout, matching
+`fplquant.form.scoring`. None of it switches over at a threshold.
+
+### Multi-period planning
+
+`src/fplquant/optimizer/multiperiod.py` is a single integer program over the
+horizon. Variables are indexed by `(player, gameweek)`: squad membership,
+starting XI, captaincy, buy, and sell, plus a per-gameweek free-transfer balance
+and hit count. The flow constraint
+
+```
+squad[p, t] == squad[p, t-1] + buy[p, t] - sell[p, t]
+```
+
+is what makes it a plan rather than a sequence of independent picks. Free
+transfers carry over with `balance[t] <= available - used_free[t] + 1`, capped
+at five; `used_free` is a variable rather than `transfers - hits` because a
+wildcard consumes no free transfers, and an expression would charge fifteen
+against a balance floored at one and make the week infeasible.
+
+Chips are binaries constrained to at most one play across the horizon. Bench
+boost and triple captain each multiply a chip decision by a selection decision,
+linearised with an auxiliary variable pinned below both factors.
+
+The candidate pool is trimmed to the top of each position by projected points,
+plus every owned player unconditionally — several binaries per player per
+gameweek across 600 players is not a tractable program, and the trimmed players
+are by construction ones the objective would never have picked.
