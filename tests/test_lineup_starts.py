@@ -7,6 +7,7 @@ from fplquant.form.fixtures import compute_fixture_adjusted_scores
 from fplquant.lineup.starts import (
     MAX_MULTIPLIER,
     MIN_MULTIPLIER,
+    combined_start_probability,
     compute_start_probabilities,
     did_start,
 )
@@ -210,3 +211,63 @@ def test_a_recent_shape_change_is_discounted_until_there_is_evidence_for_it(
     assert dropped.formation_factor < 1.0
     # ... but nowhere near the raw 3/4 the last two weeks taken alone would imply.
     assert dropped.formation_factor > 0.9
+
+
+def test_combined_start_probability_is_the_news_alone_without_a_start_estimate() -> None:
+    assert combined_start_probability(None, 0.25) == pytest.approx(0.25)
+
+
+def test_combined_start_probability_gates_selection_odds_on_the_fitness_news(
+    db_session: Session,
+) -> None:
+    """A nailed-on starter who is ruled out is not going to start, however
+    reliably their coach picks them when they're fit."""
+    home = _fixture_in(db_session, 7)
+    player = make_player(db_session, home, fpl_id=1)
+    for round_number in range(1, 11):
+        make_stat(db_session, player, round_number=round_number)
+
+    start = compute_start_probabilities(db_session)[0]
+
+    assert start.adjusted_probability > 0.8
+    assert combined_start_probability(start, 0.0) == 0.0
+    assert combined_start_probability(start, 0.5) == pytest.approx(start.adjusted_probability * 0.5)
+    assert combined_start_probability(start, 1.0) == pytest.approx(start.adjusted_probability)
+
+
+def test_evidence_weight_reports_how_much_of_the_baseline_is_the_players_own_record(
+    db_session: Session,
+) -> None:
+    home = _fixture_in(db_session, 7)
+    unplayed = make_player(db_session, home, fpl_id=1)
+    established = make_player(db_session, home, fpl_id=2)
+    for round_number in range(1, 10):
+        make_stat(db_session, established, round_number=round_number)
+
+    by_id = {p.player_id: p for p in compute_start_probabilities(db_session)}
+
+    # With nothing on record the baseline is entirely the positional prior ...
+    assert by_id[unplayed.id].evidence_weight == 0.0
+    # ... and after nine appearances it is mostly the player's own start rate.
+    assert by_id[established.id].evidence_weight == pytest.approx(9 / 12)
+
+
+def test_start_probability_carries_the_evidence_behind_it(db_session: Session) -> None:
+    """The breakdown the explorer shows: recent workload and the shape the club
+    has actually been naming, not just the headline number."""
+    # Five weekly rounds played, then the next kickoff a normal week after the
+    # last of them.
+    home = _fixture_in(db_session, 35)
+    defenders = [make_player(db_session, home, fpl_id=i, element_type=DEF) for i in range(1, 5)]
+    for round_number in range(1, 6):
+        for defender in defenders:
+            make_stat(db_session, defender, round_number=round_number, minutes=90)
+
+    start = compute_start_probabilities(db_session)[0]
+
+    assert start.minutes_load == pytest.approx(1.0)
+    assert start.rest_days == pytest.approx(7.0)
+    # A back four named every week, so both the season-long shape and the
+    # recent one report four defenders.
+    assert start.team_shape.startswith("4-")
+    assert start.recent_team_shape.startswith("4-")

@@ -23,7 +23,7 @@ def _print_starts(session: Session, top: int) -> None:
     probabilities = compute_start_probabilities(session)
     header = (
         f"{'#':>3}  {'Player':<20}{'Apps':>6}{'Base':>8}{'Adj':>8}"
-        f"{'Rest':>7}{'Fatigue':>9}{'Lineup x':>10}"
+        f"{'Rest':>7}{'Load':>7}{'Fatigue':>9}{'Shape':>8}{'Lineup x':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -32,7 +32,8 @@ def _print_starts(session: Session, top: int) -> None:
         print(
             f"{rank:>3}  {p.web_name:<20}{p.appearances:>6}"
             f"{p.baseline_probability:>8.2f}{p.adjusted_probability:>8.2f}"
-            f"{rest:>7}{p.fatigue_index:>9.2f}{p.lineup_multiplier:>10.3f}"
+            f"{rest:>7}{p.minutes_load:>7.2f}{p.fatigue_index:>9.2f}"
+            f"{p.recent_team_shape:>8}{p.lineup_multiplier:>10.3f}"
         )
 
 

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { clear } from "./components.js";
+import { playerLink } from "./explorer.js";
 
 const TOP_N = 15;
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -46,6 +47,7 @@ function buildCard(momentum, history) {
 
   const card = document.createElement("div");
   card.className = "fq-market-card";
+  playerLink(card, momentum.player_id, momentum.web_name);
 
   const head = document.createElement("div");
   head.className = "fq-market-card__head";

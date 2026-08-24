@@ -92,6 +92,7 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
 .fq-tape-deadline__value { font-size: 12.5px; font-variant-numeric: tabular-nums; font-weight: 500; color: var(--fq-accent-hi); }
 .fq-tape-viewport { position: relative; flex: 1; overflow: hidden; height: 34px; }
 .fq-tape-track { display: flex; width: max-content; animation: fq-tape 62s linear infinite; }
+.fq-tape-track:hover, .fq-tape-track:focus-within { animation-play-state: paused; }
 .fq-tape-item {
   display: flex; align-items: center; gap: 7px; padding: 0 15px; height: 34px;
   border-right: 1px solid var(--fq-line); white-space: nowrap;
@@ -282,6 +283,40 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
 .fq-bench-player__jersey { flex: none; }
 .fq-bench-player__name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fq-bench-player__line { font-size: 10.5px; color: var(--fq-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ============ Player profile links ============ */
+/* Anything showing a player — a shirt on the pitch, a transfer suggestion, a
+   market card — opens their explorer page, so they all share one affordance.
+   Applied by playerLink() in explorer.js. */
+.fq-clickable { cursor: pointer; }
+.fq-clickable:focus-visible { outline: 2px solid var(--fq-accent); outline-offset: 3px; border-radius: 9px; }
+.fq-pitch-player.fq-clickable .fq-pitch-player__card { transition: border-color 220ms ease, transform 300ms cubic-bezier(.16,1,.3,1); }
+.fq-pitch-player.fq-clickable:hover .fq-pitch-player__card { border-color: var(--fq-accent); transform: translateY(-2px); }
+.fq-bench-player.fq-clickable, .fq-transfer-side.fq-clickable {
+  transition: border-color 220ms ease, background 220ms ease;
+  border-radius: 9px;
+}
+.fq-bench-player.fq-clickable:hover { border-color: var(--fq-accent); }
+.fq-transfer-side.fq-clickable:hover .fq-transfer-name { color: var(--fq-accent-hi); }
+.fq-tape-item.fq-clickable:hover .fq-tape-item__name { color: var(--fq-accent-hi); }
+
+/* ============ Odds to start ============ */
+.fq-start-odds__value { font-size: 26px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.2; }
+/* The headline is a sentence, not a percentage, when there isn't the evidence
+   for one — see renderStartOdds(). Sized to read as an admission, not a stat. */
+.fq-start-odds__value--muted { font-size: 17px; color: var(--fq-dim); }
+.fq-start-odds__track { height: 5px; border-radius: 999px; background: var(--fq-line); margin: 10px 0 8px; overflow: hidden; }
+.fq-start-odds__fill {
+  height: 5px; border-radius: 999px; background: var(--fq-accent); width: 0;
+  transition: width 700ms cubic-bezier(.16,1,.3,1), background 300ms ease;
+}
+.fq-start-odds__word { font-size: 12.5px; color: var(--fq-dim); }
+.fq-start-factors { list-style: none; margin: 14px 0 0; padding: 12px 0 0; border-top: 1px solid var(--fq-line); }
+.fq-start-factor { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12px; }
+.fq-start-factor + .fq-start-factor { margin-top: 7px; }
+.fq-start-factor__label { color: var(--fq-faint); }
+.fq-start-factor__value { color: var(--fq-text); font-variant-numeric: tabular-nums; text-align: right; }
+.fq-start-factor__note { display: block; font-size: 10.5px; color: var(--fq-faint); font-variant-numeric: normal; }
 
 /* ============ Explorer ============ */
 .fq-layout-explorer { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }

@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { clear, jerseyIcon } from "./components.js";
+import { playerLink } from "./explorer.js";
 import { kitFor } from "./kits.js";
 import { updateHero } from "./main.js";
 
@@ -207,6 +208,7 @@ function pitchPlayerEl(player, xi, xPct, yPct) {
   wrap.className = "fq-pitch-player";
   wrap.style.left = `${xPct}%`;
   wrap.style.top = `${yPct}%`;
+  playerLink(wrap, player.player_id, player.web_name);
 
   const jerseyWrap = document.createElement("div");
   jerseyWrap.className = "fq-pitch-player__jersey-wrap";
@@ -249,6 +251,7 @@ function renderDugout(bench) {
   for (const player of bench) {
     const row = document.createElement("div");
     row.className = "fq-bench-player";
+    playerLink(row, player.player_id, player.web_name);
 
     const jerseyWrap = document.createElement("div");
     jerseyWrap.className = "fq-bench-player__jersey";

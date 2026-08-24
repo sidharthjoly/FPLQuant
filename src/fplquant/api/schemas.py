@@ -51,6 +51,33 @@ class InjuryRiskOut(BaseModel):
     risk_pct: float
 
 
+class StartOddsOut(BaseModel):
+    """How likely a player is to be *named in the XI* for their next match, with
+    the evidence behind it — see `fplquant.lineup.starts`.
+
+    Distinct from `PlayerDetailOut.chance_of_playing`, which is only the fitness
+    news. `start_probability` is that news combined with how often this player's
+    coach actually picks them, moved by the rest they've had before this kickoff
+    and by any shift in their club's shape. `evidence_weight` says how much of
+    that rests on their own record rather than a positional prior — near zero
+    early in a season, when the number should not be presented as a finding.
+    """
+
+    player_id: int
+    appearances: int
+    start_probability: float  # selection odds, gated by the fitness news
+    availability: float  # the news gate on its own, 0.0-1.0
+    baseline_probability: float  # how often they start, all else equal
+    adjusted_probability: float  # ...after rest and their club's shape
+    evidence_weight: float  # 0.0-1.0, own record vs. positional prior
+    fatigue_index: float  # 0.0 (fresh) - 1.0 (short turnaround after a full workload)
+    minutes_load: float  # share of available minutes played recently
+    rest_days: float | None  # days between their last appearance and this kickoff
+    formation_factor: float  # >1 if their club has shifted toward their position
+    team_shape: str  # their club's season-long shape, e.g. "4-4-2"
+    recent_team_shape: str  # ...and the shape it has been naming lately
+
+
 class PlayerDetailOut(PlayerOut):
     form_score: FormScoreOut | None = None
     injury_risk: InjuryRiskOut | None = None
@@ -58,6 +85,7 @@ class PlayerDetailOut(PlayerOut):
     next_opponent_is_home: bool | None = None
     fixture_difficulty: int | None = None
     chance_of_playing: float = 1.0
+    start_odds: StartOddsOut | None = None
 
 
 class PlayerGameweekStatOut(BaseModel):

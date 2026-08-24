@@ -284,3 +284,31 @@ def test_players_with_gameweek_history_use_form_not_ep_next(db_session: Session)
     # estimate has moved most of the way from the low ep_next toward the
     # points history without landing on it: 10 * 3/9 + 1.0 * 6/9.
     assert score.base_points == pytest.approx(4.0)
+
+
+def test_precomputed_lineup_multipliers_are_used_instead_of_recomputing(
+    db_session: Session,
+) -> None:
+    """Callers that already hold the start-probability breakdown pass the
+    multipliers straight in rather than paying for a second walk over every
+    player's gameweek history."""
+    team = _team(db_session, fpl_id=1, short_name="ARS")
+    opponent = _team(db_session, fpl_id=2, short_name="CHE")
+    player = _player(db_session, team, fpl_id=1, web_name="Player", ep_next=5.0)
+    _fixture(
+        db_session,
+        home=team,
+        away=opponent,
+        fpl_id=1,
+        kickoff=dt.datetime(2026, 9, 1, tzinfo=dt.UTC),
+    )
+    db_session.commit()
+
+    default = next(s for s in compute_fixture_adjusted_scores(db_session))
+    injected = next(
+        s for s in compute_fixture_adjusted_scores(db_session, lineup_multipliers={player.id: 0.5})
+    )
+
+    assert default.lineup_multiplier == 1.0
+    assert injected.lineup_multiplier == 0.5
+    assert injected.adjusted_points == pytest.approx(default.adjusted_points * 0.5)

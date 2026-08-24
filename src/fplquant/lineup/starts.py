@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from fplquant.form.ewma import ewma
 from fplquant.lineup.fatigue import compute_fatigue_scores
-from fplquant.lineup.formation import compute_team_shapes
+from fplquant.lineup.formation import DEFAULT_SLOTS, compute_team_shapes, describe_shape
 from fplquant.models.orm import Player, PlayerGameweekStat
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER
 
@@ -51,8 +51,16 @@ class StartProbability:
     adjusted_probability: float  # ...adjusted for this week's rest and their side's shape
     fatigue_index: float
     rest_days: float | None
+    minutes_load: float  # share of available minutes played over the recent window
     formation_factor: float  # >1 if their side has shifted toward using their position
+    team_shape: str  # their club's season-long shape, e.g. "4-4-2"
+    recent_team_shape: str  # ...and the shape it has been naming lately
     lineup_multiplier: float  # adjusted / baseline, clamped — what the optimizer consumes
+    # How much of `baseline_probability` came from this player's own record rather
+    # than the positional prior, 0.0-1.0. When it's low the number is mostly an
+    # assumption about their position rather than an observation about them, which
+    # is worth saying out loud wherever it gets displayed.
+    evidence_weight: float
 
 
 def did_start(stat: PlayerGameweekStat) -> bool:
@@ -125,6 +133,7 @@ def compute_start_probabilities(
         fatigue = fatigue_by_player.get(player.id)
         fatigue_index = fatigue.fatigue_index if fatigue else 0.0
         rest_days = fatigue.rest_days if fatigue else None
+        minutes_load = fatigue.minutes_load if fatigue else 0.0
 
         # Has their side moved toward or away from using their position? Both
         # numbers are shrunk toward the same 4-4-2 prior, so with little history
@@ -132,7 +141,9 @@ def compute_start_probabilities(
         shape = shapes_by_team.get(player.team_id)
         if shape is None:
             formation_factor = 1.0
+            slots, recent_slots = DEFAULT_SLOTS, DEFAULT_SLOTS
         else:
+            slots, recent_slots = shape.slots, shape.recent_slots
             long_run = shape.slots.get(player.element_type, 0.0)
             recent = shape.recent_slots.get(player.element_type, 0.0)
             raw_ratio = recent / long_run if long_run > 0 else 1.0
@@ -156,8 +167,12 @@ def compute_start_probabilities(
                 adjusted_probability=adjusted,
                 fatigue_index=fatigue_index,
                 rest_days=rest_days,
+                minutes_load=minutes_load,
                 formation_factor=formation_factor,
+                team_shape=describe_shape(slots),
+                recent_team_shape=describe_shape(recent_slots),
                 lineup_multiplier=multiplier,
+                evidence_weight=weight,
             )
         )
     return sorted(probabilities, key=lambda p: p.adjusted_probability, reverse=True)
@@ -166,3 +181,25 @@ def compute_start_probabilities(
 def lineup_multipliers_by_player(session: Session) -> dict[int, float]:
     """Just the multipliers, keyed by player id, for the expected-points pipeline."""
     return {p.player_id: p.lineup_multiplier for p in compute_start_probabilities(session)}
+
+
+def combined_start_probability(start: StartProbability | None, availability: float) -> float:
+    """The odds this player is actually named in the XI for their next match.
+
+    Two independent things have to go right, and the model keeps them apart on
+    purpose. `availability` is whether they're fit and eligible — the hard news
+    gate from `fplquant.form.fixtures.chance_of_playing`, which is 0.0 for an
+    injured or suspended player and stays 0.0 through this multiplication.
+    `adjusted_probability` is whether their coach picks them given that they're
+    fit: their own start rate, moved by the rest they've had before this
+    specific kickoff and by any shift in the shape their club has been naming.
+
+    This is for display only. It is deliberately *not* what the points model
+    consumes — see `compute_start_probabilities` for why multiplying expected
+    points by an absolute start probability would charge rotation risk twice.
+    Read alongside `evidence_weight`: with no gameweeks played this is just the
+    positional prior gated by the news, and shouldn't be shown as a finding.
+    """
+    if start is None:
+        return availability
+    return start.adjusted_probability * availability

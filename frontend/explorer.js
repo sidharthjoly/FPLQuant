@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { clear, donutGauge, jerseyIcon } from "./components.js";
 import { kitFor } from "./kits.js";
+import { setActiveTab } from "./tabs.js";
 
 const POSITION_NAMES = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
 const FDR_COLORS = { 1: "#5fc9a3", 2: "#7cc39a", 3: "#c2b487", 4: "#d69279", 5: "#e0736f" };
@@ -18,6 +19,10 @@ const similarGridEl = document.getElementById("similar-grid");
 const riskGaugeEl = document.getElementById("risk-gauge");
 const gaugeWordEl = document.getElementById("gauge-word");
 const gaugeBreakdownEl = document.getElementById("gauge-breakdown");
+const startOddsValueEl = document.getElementById("start-odds-value");
+const startOddsFillEl = document.getElementById("start-odds-fill");
+const startOddsWordEl = document.getElementById("start-odds-word");
+const startFactorsEl = document.getElementById("start-factors");
 const fixtureValueEl = document.getElementById("fixture-value");
 const fixtureNoteEl = document.getElementById("fixture-note");
 const fdrScaleEl = document.getElementById("fdr-scale");
@@ -30,6 +35,7 @@ const POPULAR_LIMIT = 8;
 
 let currentPlayerId = null;
 let searchDebounce = null;
+let detailRequestId = 0;
 let latestSearchQuery = "";
 let suggestionsRequestId = 0;
 
@@ -80,6 +86,40 @@ function pushRecentPlayer(player) {
   localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, RECENT_LIMIT)));
 }
 
+/** Open a player's profile from anywhere in the app — the pitch, the dugout, a
+ * transfer suggestion, the market tape. Every surface that shows a player is a
+ * way into their explorer page, so none of them has to duplicate the detail. */
+export async function openPlayerProfile(playerId) {
+  setActiveTab("explorer");
+  await selectPlayer(playerId);
+}
+
+/** Turn any element into a way into `playerId`'s profile. Deliberately not a
+ * <button>: several of the callers are absolutely positioned or already carry
+ * their own hover treatment, and a real button fights both.
+ *
+ * `focusable: false` keeps the click but leaves the element out of the tab
+ * order, for surfaces that only repeat players reachable elsewhere — the
+ * scrolling market tape in particular, which would otherwise put a dozen-odd
+ * redundant tab stops in the sticky header ahead of the nav. */
+export function playerLink(el, playerId, label, { focusable = true } = {}) {
+  el.classList.add("fq-clickable");
+  el.addEventListener("click", () => openPlayerProfile(playerId));
+  if (!focusable) {
+    el.title = label ? `View ${label}'s profile` : "View player profile";
+    return;
+  }
+  el.setAttribute("role", "button");
+  el.setAttribute("tabindex", "0");
+  el.setAttribute("aria-label", label ? `View ${label}'s profile` : "View player profile");
+  el.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openPlayerProfile(playerId);
+    }
+  });
+}
+
 async function showSuggestions() {
   const requestId = ++suggestionsRequestId;
   clear(resultsList);
@@ -120,13 +160,8 @@ function resultItem(player) {
   meta.textContent = `${player.team_short_name} · ${POSITION_NAMES[player.element_type]}`;
   btn.appendChild(name);
   btn.appendChild(meta);
-  btn.addEventListener("click", () => choosePlayer(player));
+  btn.addEventListener("click", () => selectPlayer(player.id));
   return btn;
-}
-
-function choosePlayer(player) {
-  pushRecentPlayer(player);
-  selectPlayer(player.id);
 }
 
 cheaperOnlyCheckbox.addEventListener("change", () => currentPlayerId && loadSimilar(currentPlayerId));
@@ -146,16 +181,52 @@ async function runSearch(query) {
   resultsList.hidden = false;
 }
 
+/** Empty the panel before a new player's data arrives. Since any player shown
+ * anywhere opens this page, the panel is usually already full of someone else
+ * when a request starts, and leaving that up would show one player's photo,
+ * form, and start odds under another player's heading for the length of the
+ * fetch. */
+function clearDetail() {
+  clear(avatarEl);
+  nameEl.textContent = "Loading…";
+  metaEl.textContent = "";
+  document.querySelector(".fq-nationality-tag")?.remove();
+  clear(riskGaugeEl);
+  gaugeWordEl.textContent = "";
+  gaugeBreakdownEl.textContent = "";
+  startOddsValueEl.textContent = "—";
+  startOddsValueEl.classList.remove("fq-start-odds__value--muted");
+  startOddsFillEl.style.width = "0%";
+  startOddsWordEl.textContent = "";
+  clear(startFactorsEl);
+  fixtureValueEl.textContent = "—";
+  fixtureNoteEl.textContent = "";
+  clear(fdrScaleEl);
+  clear(trendChartEl);
+  trendSummaryEl.textContent = "";
+  clear(similarGridEl);
+}
+
 async function selectPlayer(playerId) {
   currentPlayerId = playerId;
+  const requestId = ++detailRequestId;
   resultsList.hidden = true;
   searchInput.value = "";
   emptyEl.hidden = true;
   detailEl.hidden = false;
+  clearDetail();
 
   const player = await api.getPlayer(playerId);
+  // Someone clicked a different player while this one was in flight — the
+  // panel belongs to them now, so drop this response rather than racing it in.
+  if (requestId !== detailRequestId) return;
+
+  // Recorded here rather than at each entry point: callers only ever have an
+  // id, and this is the one place the full player is in hand.
+  pushRecentPlayer(player);
   renderHeader(player);
   renderInjuryGauge(player);
+  renderStartOdds(player);
   renderNextFixture(player);
   await Promise.all([loadTrend(playerId, player), loadSimilar(playerId)]);
 }
@@ -209,6 +280,129 @@ function renderInjuryGauge(player) {
   gaugeBreakdownEl.textContent = `Age ${age} · history ${player.injury_risk.history_component.toFixed(2)} · load ${player.injury_risk.load_component.toFixed(2)}`;
 }
 
+// Below this, `baseline_probability` is mostly the positional prior rather than
+// anything observed about this player — see StartOddsOut.evidence_weight. Early
+// in a season that's every player, and a confident-looking percentage would be
+// worse than admitting we don't know yet.
+const ENOUGH_EVIDENCE = 0.5;
+
+function pct(value) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function startOddsWord(probability) {
+  if (probability >= 0.8) return "Nailed on";
+  if (probability >= 0.6) return "Likely to start";
+  if (probability >= 0.35) return "Rotation risk";
+  if (probability > 0) return "Unlikely to start";
+  return "Ruled out";
+}
+
+/** How likely this player is to be *named in the XI*, not just to be fit: their
+ * own start rate, moved by the rest they've had before this kickoff and by the
+ * shape their club has been picking, then gated by the injury news. */
+function renderStartOdds(player) {
+  clear(startFactorsEl);
+  const odds = player.start_odds;
+
+  startOddsValueEl.classList.remove("fq-start-odds__value--muted");
+
+  if (!odds) {
+    startOddsValueEl.textContent = "Not available";
+    startOddsValueEl.classList.add("fq-start-odds__value--muted");
+    startOddsFillEl.style.width = "0%";
+    startOddsWordEl.textContent = "";
+    return;
+  }
+
+  const ruledOut = odds.availability === 0;
+  const unproven = odds.evidence_weight < ENOUGH_EVIDENCE;
+
+  if (unproven && !ruledOut) {
+    // Nothing to say about selection yet — show the fitness news, which is the
+    // one thing actually known, rather than dressing up a positional prior.
+    const knowsSomething = odds.availability < 1;
+    startOddsValueEl.textContent = knowsSomething ? pct(odds.availability) : "Not enough history";
+    startOddsValueEl.classList.toggle("fq-start-odds__value--muted", !knowsSomething);
+    startOddsFillEl.style.width = knowsSomething ? pct(odds.availability) : "0%";
+    startOddsWordEl.textContent =
+      odds.appearances === 0
+        ? "No gameweeks played yet — nothing to judge selection on."
+        : `Only ${odds.appearances} gameweek${odds.appearances === 1 ? "" : "s"} on record so far.`;
+  } else {
+    startOddsValueEl.textContent = pct(odds.start_probability);
+    startOddsFillEl.style.width = pct(odds.start_probability);
+    startOddsWordEl.textContent = startOddsWord(odds.start_probability);
+  }
+
+  const color =
+    odds.start_probability >= 0.6
+      ? "var(--fq-up)"
+      : odds.start_probability >= 0.35
+        ? "var(--fq-warn)"
+        : "var(--fq-down)";
+  startOddsFillEl.style.background = ruledOut || !unproven ? color : "var(--fq-dim)";
+
+  startFactorsEl.appendChild(
+    startFactor(
+      "Fitness news",
+      odds.availability === 1 ? "Fully available" : pct(odds.availability),
+      odds.availability === 1 ? null : "flagged by FPL"
+    )
+  );
+  if (!unproven) {
+    startFactorsEl.appendChild(
+      startFactor(
+        "Usually starts",
+        pct(odds.baseline_probability),
+        `${odds.appearances} gameweek${odds.appearances === 1 ? "" : "s"}`
+      )
+    );
+  }
+  if (odds.rest_days !== null) {
+    startFactorsEl.appendChild(
+      startFactor(
+        "Rest before kickoff",
+        `${odds.rest_days.toFixed(1)} days`,
+        odds.fatigue_index > 0 ? "short turnaround" : null
+      )
+    );
+  }
+  startFactorsEl.appendChild(
+    startFactor("Recent minutes", pct(odds.minutes_load), "of what was available")
+  );
+  startFactorsEl.appendChild(
+    startFactor(
+      "Club shape",
+      odds.recent_team_shape,
+      odds.recent_team_shape === odds.team_shape ? null : `was ${odds.team_shape}`
+    )
+  );
+}
+
+function startFactor(label, value, note) {
+  const row = document.createElement("li");
+  row.className = "fq-start-factor";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "fq-start-factor__label";
+  labelEl.textContent = label;
+
+  const valueEl = document.createElement("span");
+  valueEl.className = "fq-start-factor__value";
+  valueEl.textContent = value;
+  if (note) {
+    const noteEl = document.createElement("span");
+    noteEl.className = "fq-start-factor__note";
+    noteEl.textContent = note;
+    valueEl.appendChild(noteEl);
+  }
+
+  row.appendChild(labelEl);
+  row.appendChild(valueEl);
+  return row;
+}
+
 function renderNextFixture(player) {
   clear(fdrScaleEl);
   if (!player.next_opponent) {
@@ -217,7 +411,7 @@ function renderNextFixture(player) {
     return;
   }
   fixtureValueEl.textContent = `${player.next_opponent} (${player.next_opponent_is_home ? "H" : "A"})`;
-  fixtureNoteEl.textContent = `FDR ${player.fixture_difficulty} · ${Math.round(player.chance_of_playing * 100)}% likely to play`;
+  fixtureNoteEl.textContent = `FDR ${player.fixture_difficulty} · ${player.next_opponent_is_home ? "at home" : "away from home"}`;
   for (let fdr = 1; fdr <= 5; fdr++) {
     const bar = document.createElement("div");
     bar.className = "fq-fdr-bar";
@@ -229,7 +423,9 @@ function renderNextFixture(player) {
 
 async function loadTrend(playerId, player) {
   clear(trendChartEl);
+  const requestId = detailRequestId;
   const history = await api.getPlayerHistory(playerId);
+  if (requestId !== detailRequestId) return;
   if (history.length === 0) {
     trendSummaryEl.textContent = "";
     const empty = document.createElement("p");
@@ -360,10 +556,12 @@ function buildTrendChart(values) {
 
 async function loadSimilar(playerId) {
   clear(similarGridEl);
+  const requestId = detailRequestId;
   const results = await api.getSimilarPlayers(playerId, {
     cheaper_only: cheaperOnlyCheckbox.checked,
     any_position: anyPositionCheckbox.checked,
   });
+  if (requestId !== detailRequestId) return;
   if (results.length === 0) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
@@ -376,6 +574,7 @@ async function loadSimilar(playerId) {
   for (const r of results) {
     const card = document.createElement("div");
     card.className = "fq-similar-card";
+    playerLink(card, r.player_id, r.web_name);
 
     const head = document.createElement("div");
     head.className = "fq-similar-card__head";

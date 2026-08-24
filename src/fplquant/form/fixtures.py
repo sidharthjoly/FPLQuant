@@ -97,7 +97,9 @@ def chance_of_playing(player: Player) -> float:
 
 
 def compute_fixture_adjusted_scores(
-    session: Session, halflife: float = 3.0
+    session: Session,
+    halflife: float = 3.0,
+    lineup_multipliers: dict[int, float] | None = None,
 ) -> list[FixtureAdjustedScore]:
     """Expected points for each player's next match specifically — folding in
     FPL's official fixture difficulty, our own continuous opponent-strength
@@ -114,9 +116,15 @@ def compute_fixture_adjusted_scores(
     more or less likely than usual to be picked, on the evidence of their rest
     and their side's shape. It is centred on 1.0 and does nothing until there's
     something to say.
+
+    `lineup_multipliers` is accepted pre-computed for callers that already have
+    the full start-probability breakdown in hand, so they don't pay for a second
+    walk over every player's history — the same idiom as the `players` argument
+    on `fplquant.lineup.fatigue.compute_fatigue_scores`.
     """
     base_points = predicted_points_by_player(session, halflife)
-    lineup_by_player = lineup_multipliers_by_player(session)
+    if lineup_multipliers is None:
+        lineup_multipliers = lineup_multipliers_by_player(session)
     next_fixture_by_team = get_next_fixture_by_team(session)
     teams_by_id = {t.id: t for t in session.query(Team).all()}
     league_avg_attack, league_avg_defence = _league_average_strengths(list(teams_by_id.values()))
@@ -126,7 +134,7 @@ def compute_fixture_adjusted_scores(
         base = base_points.get(player.id, 0.0)
         fixture = next_fixture_by_team.get(player.team_id)
         play_prob = chance_of_playing(player)
-        lineup = lineup_by_player.get(player.id, 1.0)
+        lineup = lineup_multipliers.get(player.id, 1.0)
 
         if fixture is None:
             # No fixture data to adjust by (a genuine blank gameweek, or

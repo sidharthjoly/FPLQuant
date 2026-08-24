@@ -7,6 +7,11 @@ from fplquant.api import schemas
 from fplquant.api.deps import get_session
 from fplquant.form.fixtures import compute_fixture_adjusted_scores
 from fplquant.form.scoring import compute_form_scores
+from fplquant.lineup.starts import (
+    StartProbability,
+    combined_start_probability,
+    compute_start_probabilities,
+)
 from fplquant.models.orm import Player, PlayerGameweekStat
 from fplquant.risk.injury import compute_injury_risk_scores
 from fplquant.similarity.finder import find_cheaper_alternatives, find_similar_players
@@ -70,6 +75,24 @@ def _to_player_out(player: Player) -> schemas.PlayerOut:
     )
 
 
+def _to_start_odds(start: StartProbability, availability: float) -> schemas.StartOddsOut:
+    return schemas.StartOddsOut(
+        player_id=start.player_id,
+        appearances=start.appearances,
+        start_probability=combined_start_probability(start, availability),
+        availability=availability,
+        baseline_probability=start.baseline_probability,
+        adjusted_probability=start.adjusted_probability,
+        evidence_weight=start.evidence_weight,
+        fatigue_index=start.fatigue_index,
+        minutes_load=start.minutes_load,
+        rest_days=start.rest_days,
+        formation_factor=start.formation_factor,
+        team_shape=start.team_shape,
+        recent_team_shape=start.recent_team_shape,
+    )
+
+
 @router.get("", response_model=list[schemas.PlayerOut])
 def list_players(
     position: int | None = None,
@@ -113,9 +136,17 @@ def get_player(player_id: int, session: Session = Depends(get_session)) -> schem
 
     form = next((s for s in compute_form_scores(session) if s.player_id == player_id), None)
     risk = next((s for s in compute_injury_risk_scores(session) if s.player_id == player_id), None)
-    fixture = next(
-        (s for s in compute_fixture_adjusted_scores(session) if s.player_id == player_id), None
-    )
+
+    # The start probabilities are computed here rather than left to
+    # `compute_fixture_adjusted_scores` to compute internally, so the full
+    # breakdown is available for `start_odds` without walking every player's
+    # gameweek history a second time.
+    starts = compute_start_probabilities(session)
+    start = next((s for s in starts if s.player_id == player_id), None)
+    multipliers = {s.player_id: s.lineup_multiplier for s in starts}
+    fixtures = compute_fixture_adjusted_scores(session, lineup_multipliers=multipliers)
+    fixture = next((s for s in fixtures if s.player_id == player_id), None)
+    availability = fixture.chance_of_playing if fixture else 1.0
 
     return schemas.PlayerDetailOut(
         **_to_player_out(player).model_dump(),
@@ -124,7 +155,8 @@ def get_player(player_id: int, session: Session = Depends(get_session)) -> schem
         next_opponent=fixture.opponent_short_name if fixture else None,
         next_opponent_is_home=fixture.is_home if fixture else None,
         fixture_difficulty=fixture.difficulty if fixture else None,
-        chance_of_playing=fixture.chance_of_playing if fixture else 1.0,
+        chance_of_playing=availability,
+        start_odds=_to_start_odds(start, availability) if start else None,
     )
 
 

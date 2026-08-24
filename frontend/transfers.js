@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { clear, jerseyIcon, playerMetaLine } from "./components.js";
+import { playerLink } from "./explorer.js";
 import { kitFor } from "./kits.js";
 
 const form = document.getElementById("transfers-form");
@@ -176,6 +177,7 @@ function arrowIcon() {
 function transferSide(labelText, tagClass, player, alignEnd = false) {
   const side = document.createElement("div");
   side.className = alignEnd ? "fq-transfer-side fq-transfer-side--in" : "fq-transfer-side";
+  playerLink(side, player.player_id, player.web_name);
 
   const tag = document.createElement("span");
   tag.className = `fq-transfer-tag ${tagClass}`;
@@ -206,6 +208,7 @@ function renderCurrentSquad(players) {
     const row = document.createElement("div");
     row.className = "fq-bench-player";
     row.style.flex = "0 1 220px";
+    playerLink(row, player.player_id, player.web_name);
 
     const jerseyWrap = document.createElement("div");
     jerseyWrap.className = "fq-bench-player__jersey";

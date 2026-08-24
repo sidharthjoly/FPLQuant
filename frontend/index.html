@@ -194,7 +194,7 @@
         <div class="fq-player-avatar" id="player-avatar">?</div>
         <div class="fq-player-info">
           <div class="fq-player-name" id="player-name">Search for a player</div>
-          <div class="fq-player-meta" id="player-meta">Their form, injury risk, and similar players will show up here.</div>
+          <div class="fq-player-meta" id="player-meta">Their form, injury risk, odds to start, and similar players will show up here.</div>
         </div>
         <div class="fq-search-wrap">
           <input class="fq-search-input" type="search" id="player-search" placeholder="Search a player" autocomplete="off" />
@@ -228,6 +228,14 @@
             </div>
 
             <div class="fq-fixture-card">
+              <div class="fq-card__kicker" style="margin-bottom: 12px">Odds to start</div>
+              <div class="fq-start-odds__value" id="start-odds-value">—</div>
+              <div class="fq-start-odds__track"><div class="fq-start-odds__fill" id="start-odds-fill"></div></div>
+              <div class="fq-start-odds__word" id="start-odds-word"></div>
+              <ul class="fq-start-factors" id="start-factors"></ul>
+            </div>
+
+            <div class="fq-fixture-card">
               <div class="fq-card__kicker" style="margin-bottom: 12px">Next fixture</div>
               <div class="fq-fixture-value" id="fixture-value">—</div>
               <div class="fq-fixture-note" id="fixture-note"></div>
@@ -245,7 +253,7 @@
       </div>
 
       <div id="explorer-empty" class="empty-state">
-        <p>Search for a player to see their form trend, injury risk, and similar players.</p>
+        <p>Search for a player — or click one anywhere else in the app — to see their form trend, injury risk, odds to start, and similar players.</p>
       </div>
     </section>
 
@@ -374,6 +382,7 @@
   </footer>
 
   <script type="module" src="api.js"></script>
+  <script type="module" src="tabs.js"></script>
   <script type="module" src="components.js"></script>
   <script type="module" src="kits.js"></script>
   <script type="module" src="optimizer.js"></script>

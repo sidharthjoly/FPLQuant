@@ -1,5 +1,6 @@
 import datetime as dt
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -353,3 +354,90 @@ def test_get_similar_players_empty_without_gameweek_history(
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_get_player_detail_includes_start_odds_with_the_evidence_behind_them(
+    db_session: Session, api_client: TestClient
+) -> None:
+    team = _team(db_session, fpl_id=1)
+    opponent = Team(fpl_id=2, name="Chelsea", short_name="CHE")
+    db_session.add(opponent)
+    db_session.flush()
+    player = _player(db_session, team, 1, "Regular")
+    for round_number in range(1, 6):
+        db_session.add(
+            PlayerGameweekStat(
+                player_id=player.id,
+                round=round_number,
+                total_points=5,
+                minutes=90,
+                starts=1,
+                kickoff_time=dt.datetime(2026, 8, 15, tzinfo=dt.UTC)
+                + dt.timedelta(days=7 * (round_number - 1)),
+            )
+        )
+    db_session.add(
+        Fixture(
+            fpl_id=1,
+            kickoff_time=dt.datetime(2026, 9, 19, tzinfo=dt.UTC),
+            finished=False,
+            team_h_id=team.id,
+            team_a_id=opponent.id,
+            team_h_difficulty=2,
+            team_a_difficulty=4,
+        )
+    )
+    db_session.commit()
+
+    body = api_client.get(f"/players/{player.id}").json()
+
+    odds = body["start_odds"]
+    assert odds["appearances"] == 5
+    assert odds["availability"] == 1.0
+    assert odds["start_probability"] == pytest.approx(odds["adjusted_probability"])
+    assert odds["start_probability"] > 0.7
+    assert odds["evidence_weight"] == pytest.approx(5 / 8)
+    assert odds["minutes_load"] == pytest.approx(1.0)
+    assert odds["rest_days"] == pytest.approx(7.0)
+    assert odds["recent_team_shape"]
+
+
+def test_start_odds_are_zero_for_a_player_ruled_out_by_the_news(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """The fitness gate stays hard: however reliably a coach picks someone,
+    an injured player is not going to start."""
+    team = _team(db_session)
+    player = _player(db_session, team, 1, "Injured")
+    player.status = "i"
+    player.chance_of_playing_next_round = 0
+    for round_number in range(1, 6):
+        db_session.add(
+            PlayerGameweekStat(
+                player_id=player.id, round=round_number, minutes=90, starts=1, total_points=5
+            )
+        )
+    db_session.commit()
+
+    odds = api_client.get(f"/players/{player.id}").json()["start_odds"]
+
+    assert odds["availability"] == 0.0
+    assert odds["adjusted_probability"] > 0.7  # they'd start if fit
+    assert odds["start_probability"] == 0.0
+
+
+def test_start_odds_report_no_evidence_before_a_ball_is_kicked(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """Preseason there is nothing to judge selection on, and `evidence_weight`
+    has to say so — the probability is the bare positional prior, not a finding
+    about this player."""
+    team = _team(db_session)
+    player = _player(db_session, team, 1, "Unplayed", element_type=4)
+    db_session.commit()
+
+    odds = api_client.get(f"/players/{player.id}").json()["start_odds"]
+
+    assert odds["appearances"] == 0
+    assert odds["evidence_weight"] == 0.0
+    assert odds["baseline_probability"] == pytest.approx(0.4)  # the forward prior
