@@ -250,6 +250,18 @@ class NextDeadlineOut(BaseModel):
     gameweek: int | None = None
 
 
+class RemainingGameweeksOut(BaseModel):
+    """Which gameweeks still have football left in them.
+
+    Read from the fixture list rather than counted forward from the current
+    round, so a gameweek that has been entirely wiped out never appears and a
+    part-played one still does.
+    """
+
+    count: int
+    events: list[int]
+
+
 class PointsBreakdownOut(BaseModel):
     """Expected points for one player in one fixture, split by scoring rule."""
 

@@ -15,6 +15,7 @@ import { api } from "./api.js";
 import { clear, jerseyIcon, playerMetaLine } from "./components.js";
 import { playerLink } from "./explorer.js";
 import { kitFor } from "./kits.js";
+import { onTabChange } from "./tabs.js";
 
 const CHIP_LABELS = {
   wildcard: "Wildcard",
@@ -45,12 +46,67 @@ const chipInputs = [
 
 let horizon = 5;
 
+const horizonButtons = () => Array.from(horizonSeg.querySelectorAll(".fq-seg__btn"));
+
+function selectHorizon(btn) {
+  horizon = Number(btn.dataset.horizon);
+  for (const b of horizonButtons()) b.classList.toggle("active", b === btn);
+}
+
 horizonSeg.addEventListener("click", (event) => {
   const btn = event.target.closest(".fq-seg__btn");
-  if (!btn) return;
-  horizon = Number(btn.dataset.horizon);
-  for (const b of horizonSeg.querySelectorAll(".fq-seg__btn")) {
-    b.classList.toggle("active", b === btn);
+  if (!btn || btn.disabled) return;
+  selectHorizon(btn);
+});
+
+/** Offer only the horizons the season still has room for.
+ *
+ * The planner already clamps to the fixture list, so asking for eight
+ * gameweeks in May returns three — correct, and completely invisible. Late in
+ * a season the control would keep advertising horizons that silently collapse
+ * to something shorter, which is the sort of thing that reads as the model
+ * being wrong rather than the calendar being short. */
+function applyRemainingGameweeks(count) {
+  for (const btn of horizonButtons()) {
+    const tooFar = Number(btn.dataset.horizon) > count;
+    btn.disabled = tooFar;
+    btn.title = tooFar ? `Only ${count} gameweek${count === 1 ? "" : "s"} left this season` : "";
+  }
+  let usable = horizonButtons().filter((b) => !b.disabled);
+  if (usable.length === 0 && count > 0) {
+    // Fewer gameweeks left than the shortest option offers. With two rounds to
+    // go a two-gameweek plan is still worth having, and disabling everything
+    // would claim the season was over a fortnight early — so the shortest
+    // option is retuned to whatever is actually left.
+    const shortest = horizonButtons()[0];
+    shortest.dataset.horizon = String(count);
+    shortest.textContent = `${count} GW`;
+    shortest.disabled = false;
+    shortest.title = "";
+    usable = [shortest];
+  }
+  if (usable.length === 0) {
+    // Genuinely nothing left to plan. Say so rather than sending a request
+    // that can only come back empty.
+    planBtn.disabled = true;
+    planLabel.textContent = "Season over";
+    return;
+  }
+  const active = horizonButtons().find((b) => b.classList.contains("active"));
+  if (!active || active.disabled) selectHorizon(usable[usable.length - 1]);
+}
+
+// Fetched the first time the tab is opened rather than on page load, so a
+// visitor who never opens the Planner never pays for the request.
+let remainingLoaded = false;
+onTabChange(async (target) => {
+  if (target !== "planner" || remainingLoaded) return;
+  remainingLoaded = true;
+  try {
+    const { count } = await api.getRemainingGameweeks();
+    applyRemainingGameweeks(count);
+  } catch {
+    /* leave the defaults; the planner clamps server-side regardless */
   }
 });
 

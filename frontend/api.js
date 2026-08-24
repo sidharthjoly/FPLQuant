@@ -48,4 +48,5 @@ export const api = {
   planHorizon: (payload) =>
     request("/plan", { method: "POST", body: JSON.stringify(payload) }),
   getNextDeadline: () => request("/meta/next-deadline"),
+  getRemainingGameweeks: () => request("/meta/remaining-gameweeks"),
 };

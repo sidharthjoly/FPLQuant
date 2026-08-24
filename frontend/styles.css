@@ -123,6 +123,11 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
 .panel.active { display: block; }
 
 .fq-layout-sidebar { display: grid; grid-template-columns: 340px 1fr; gap: 22px; align-items: start; }
+/* Grid items default to `min-width: auto`, so the results column widens to fit
+   its widest child rather than constraining it. That silently defeats any
+   `overflow-x: auto` inside — the planner timeline stretched the column instead
+   of scrolling. Applied to both columns so nothing in either can do it again. */
+.fq-layout-sidebar > * { min-width: 0; }
 @media (max-width: 900px) { .fq-layout-sidebar { grid-template-columns: 1fr; } }
 
 .fq-sidebar {
@@ -409,6 +414,8 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
   color: var(--fq-dim); background: transparent; transition: background 240ms ease, color 240ms ease;
 }
 .fq-seg__btn.active { color: var(--fq-accent-hi); background: var(--fq-accent-soft); }
+.fq-seg__btn:disabled { color: var(--fq-faint); cursor: not-allowed; opacity: 0.45; }
+.fq-seg__btn:disabled:hover { background: transparent; }
 
 .fq-market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 14px; }
 .fq-market-card {

@@ -1,9 +1,12 @@
 import datetime as dt
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from fplquant.api import schemas
+from fplquant.api.deps import get_session
 from fplquant.data.fpl_client import FPLClient
+from fplquant.schedule import upcoming_events
 
 router = APIRouter(prefix="/meta", tags=["meta"])
 
@@ -36,3 +39,24 @@ def next_deadline() -> schemas.NextDeadlineOut:
 
     next_event = min(upcoming, key=lambda event: event["deadline_time"])
     return schemas.NextDeadlineOut(deadline=next_event["deadline_time"], gameweek=next_event["id"])
+
+
+# A full season, so the query is "everything still to come" rather than a
+# window — the caller wants the ceiling, not a page of results.
+_WHOLE_SEASON = 38
+
+
+@router.get("/remaining-gameweeks", response_model=schemas.RemainingGameweeksOut)
+def remaining_gameweeks(
+    session: Session = Depends(get_session),
+) -> schemas.RemainingGameweeksOut:
+    """How many gameweeks are left to plan over.
+
+    The planner clamps its horizon to what the fixture list can actually
+    support, which is the right behaviour and an invisible one: late in a
+    season, asking for eight gameweeks quietly returns three. This lets the
+    dashboard offer only the horizons that still mean something, so the
+    control reflects the season rather than a number picked at build time.
+    """
+    events = upcoming_events(session, horizon=_WHOLE_SEASON)
+    return schemas.RemainingGameweeksOut(count=len(events), events=events)

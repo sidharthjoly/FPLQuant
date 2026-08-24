@@ -1,8 +1,10 @@
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 import fplquant.api.routers.meta as meta_router
+from tests.engine_helpers import make_fixture, make_league
 
 
 class StubFPLClient:
@@ -56,3 +58,45 @@ def test_next_deadline_returns_null_when_season_is_over(
 
     assert response.status_code == 200
     assert response.json() == {"deadline": None, "gameweek": None}
+
+
+def test_remaining_gameweeks_counts_only_rounds_with_football_left(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """The planner clamps its horizon to this, so the dashboard needs it to
+    offer horizons that still mean something rather than ones that silently
+    collapse to something shorter."""
+    teams = make_league(db_session, teams=4)
+    make_fixture(
+        db_session, teams[0], teams[1], fpl_id=1, event=1, finished=True, home_score=1, away_score=0
+    )
+    make_fixture(db_session, teams[0], teams[1], fpl_id=2, event=4)
+    make_fixture(db_session, teams[2], teams[3], fpl_id=3, event=7)
+    db_session.commit()
+
+    body = api_client.get("/meta/remaining-gameweeks").json()
+
+    assert body["events"] == [4, 7]
+    assert body["count"] == 2
+
+
+def test_remaining_gameweeks_is_zero_once_the_season_is_done(
+    db_session: Session, api_client: TestClient
+) -> None:
+    teams = make_league(db_session, teams=2)
+    make_fixture(
+        db_session,
+        teams[0],
+        teams[1],
+        fpl_id=1,
+        event=38,
+        finished=True,
+        home_score=2,
+        away_score=2,
+    )
+    db_session.commit()
+
+    body = api_client.get("/meta/remaining-gameweeks").json()
+
+    assert body["count"] == 0
+    assert body["events"] == []
