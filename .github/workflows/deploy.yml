@@ -16,7 +16,15 @@ jobs:
           script: |
             set -e
             cd FPLQuant
-            git pull origin main
+            # Mirror the remote rather than merging into whatever is on the box.
+            # `git pull` fails outright if the checkout has drifted at all — a
+            # half-applied earlier pull, a file the deploy user cannot write —
+            # and a deploy target has no business holding local changes anyway.
+            # `git clean -fd` leaves ignored files alone, so the SQLite database
+            # under data/ and the .env survive.
+            git fetch origin main
+            git reset --hard origin/main
+            git clean -fd
             docker compose pull api
             docker compose up -d
             for i in $(seq 1 30); do
