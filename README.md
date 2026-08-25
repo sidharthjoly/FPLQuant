@@ -265,7 +265,7 @@ to the heuristic, so a fresh clone still produces predictions.
 
 ```bash
 uv run fplquant-import-history     # ~114k player-gameweeks, MIT-licensed archive
-uv run fplquant-train-minutes      # trains, evaluates, saves to data/models/
+uv run fplquant-train-minutes      # trains, evaluates, saves into the package
 ```
 
 ### Simulation

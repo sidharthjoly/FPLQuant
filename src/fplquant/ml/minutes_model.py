@@ -37,7 +37,6 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sqlalchemy.orm import Session
 
-from fplquant.config import REPO_ROOT
 from fplquant.ml.features import (
     FEATURE_NAMES,
     MinutesFeatures,
@@ -47,7 +46,13 @@ from fplquant.ml.features import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL_PATH = REPO_ROOT / "data" / "models" / "minutes.joblib"
+# Shipped inside the package rather than under `data/`. On the deployed VM
+# `data/` is a bind mount owned by the container, so a checked-in file there
+# cannot be written by the deploy user — `git pull` failed outright with
+# "cannot create directory at 'data/models': Permission denied". The model is a
+# build artefact that belongs with the code in any case: putting it here means
+# the image is self-contained and the data volume holds only data.
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parent / "artifacts" / "minutes.joblib"
 
 # The most recent archived season is held out. Not a random split — see the
 # module docstring.
