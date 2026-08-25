@@ -306,3 +306,8 @@ class HistoricalPlayerGameweek(Base):
     selected: Mapped[int] = mapped_column(Integer, default=0)
     transfers_in: Mapped[int] = mapped_column(Integer, default=0)
     transfers_out: Mapped[int] = mapped_column(Integer, default=0)
+    # FPL's own expected-points projection for this fixture, published before
+    # the deadline. The baseline any points model has to beat to justify
+    # itself — it is free, it is what the game already shows every manager, and
+    # a model that cannot beat it is an elaborate way of being worse.
+    expected_points: Mapped[float | None] = mapped_column(Float, nullable=True)

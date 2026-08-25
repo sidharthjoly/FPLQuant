@@ -254,8 +254,13 @@ def _normalise_to_slots(values: list[float], slots: float, cap: float) -> list[f
     return result
 
 
-def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
-    """Absolute start probabilities and expected minutes, keyed by player id."""
+def compute_minutes_profiles(session: Session, use_model: bool = True) -> dict[int, MinutesProfile]:
+    """Absolute start probabilities and expected minutes, keyed by player id.
+
+    `use_model=False` forces the hand-built heuristic. Used by the backtest,
+    which replays seasons the model was trained on — leaving it enabled would
+    let it recognise the gameweeks it is being tested against.
+    """
     players = session.query(Player).options(selectinload(Player.gameweek_stats)).all()
     if not players:
         return {}
@@ -265,7 +270,7 @@ def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
     }
     # A trained model replaces the price-and-history blend below when one
     # exists, and is simply absent otherwise — see `ml.minutes_model.load`.
-    trained = load()
+    trained = load() if use_model else None
     model_probabilities = _model_probabilities(session, players, trained) if trained else {}
 
     # The rotation nudge from the lineup module: rest days before this specific

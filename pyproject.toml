@@ -38,6 +38,7 @@ fplquant-project = "fplquant.engine.cli:main"
 fplquant-plan = "fplquant.optimizer.plan_cli:main"
 fplquant-import-history = "fplquant.data.import_history_cli:main"
 fplquant-train-minutes = "fplquant.ml.cli:main"
+fplquant-backtest = "fplquant.backtest.cli:main"
 fplquant-api = "fplquant.api.run:main"
 
 [build-system]

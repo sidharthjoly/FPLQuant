@@ -66,6 +66,8 @@ _FLOAT_FIELDS = ("influence", "creativity", "threat", "ict_index")
 # Absent before 2022-23, and a genuine absence rather than a zero — stored as
 # NULL so a model can tell "no chances created" from "not measured that year".
 _OPTIONAL_FLOAT_FIELDS = ("expected_goals", "expected_assists", "expected_goals_conceded")
+# FPL publishes its own projection as `xP`; stored under a clearer name.
+_XP_COLUMN = "xP"
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ def parse_rows(season: str, csv_text: str) -> list[dict[str, Any]]:
             row[field] = as_float(raw.get(field))
         for field in _OPTIONAL_FLOAT_FIELDS:
             row[field] = _optional_float(raw, field)
+        row["expected_points"] = _optional_float(raw, _XP_COLUMN)
         rows.append(row)
     return rows
 

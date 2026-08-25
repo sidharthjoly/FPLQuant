@@ -128,6 +128,7 @@ whole engine still produces a usable projection, built entirely from priors.
 | `fplquant-plan` | Plan squad, transfers, captaincy, and chips over a horizon |
 | `fplquant-import-history` | Import past FPL seasons from the public archive, for training |
 | `fplquant-train-minutes` | Train and evaluate the learned start-probability model |
+| `fplquant-backtest` | Replay past gameweeks and score the engine against FPL's own xP |
 | `fplquant-api` | Run the FastAPI backend and dashboard |
 
 Injury ingestion is deliberately separate from the main ingest: it scrapes
@@ -280,6 +281,54 @@ that three defenders from one club are one bet held three times. It also
 double-checks the model: the sampler and the closed form are independent
 implementations, and their means agree to within a few hundredths of a point
 across the whole player pool ([`tests/test_engine_simulate.py`](tests/test_engine_simulate.py)).
+
+### Does any of it work?
+
+`fplquant-backtest` replays past gameweeks: the world is rebuilt as it stood
+before each deadline, the **real engine** is asked for its projection — not a
+reimplementation that happens to agree — and the answer is scored against what
+players went on to do, alongside the baselines it has to beat.
+
+The headline result, over **131 gameweeks across four seasons**, is that the
+engine comes last:
+
+| GW6-38, 2022-23 to 2025-26 | MAE | rank corr | top-11 realised |
+| --- | --- | --- | --- |
+| FPL's own xP | **0.976** | 0.577 | **75.4** |
+| rolling 3-GW mean | 1.076 | **0.673** | 47.3 |
+| this engine | 1.163 | 0.542 | 53.6 |
+
+It loses to `xP` — the projection the game already shows every manager for
+free — and it loses to a three-gameweek rolling average, which is about the
+crudest thing you could write.
+
+The two metrics disagree in a way worth reading. Rank correlation across the
+whole pool is dominated by separating "will play" from "won't", and a rolling
+mean of recent points does that well. `top-11 realised` — what the eleven
+players a metric ranks highest actually went on to score — is the
+decision-relevant one, and there FPL's xP wins clearly.
+
+Two hypotheses for the gap turned out not to explain it. Enabling the
+learned minutes model narrows it (0.535 → 0.595) but does not close it, and
+that comparison is optimistic anyway because the model was trained on these
+seasons. And restricting the comparison to players who actually appeared —
+removing the advantage FPL's xP gets from knowing team news the archive does
+not carry — leaves the gap intact (0.311 against 0.573).
+
+So the honest position is that the structural model is elegant, internally
+consistent, well tested, and worse than both a free number and a naive average.
+That is a real finding rather than a caveat, and it is the argument for the next
+piece of work: stop competing with `ep_next` and start *using* it — as a
+feature, or by learning the residual on top of it. The machinery to check
+whether that helps now exists, which is the point of having built this.
+
+The replay disables the trained minutes model by default, because it was fitted
+on the same seasons and would otherwise recognise the gameweeks it is being
+tested against. `--with-minutes-model` re-enables it as a diagnostic and says so.
+
+Two limits worth stating: the archive carries no team strength ratings and no
+injury news, so the replay cannot measure the availability gate, and both apply
+equally to the baselines.
 
 ### Multi-period planning
 

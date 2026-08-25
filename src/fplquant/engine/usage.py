@@ -108,7 +108,9 @@ def _price_index(player: Player, position_mean_cost: dict[int, float]) -> float:
     return max(_MIN_PRICE_INDEX, min(_MAX_PRICE_INDEX, index))
 
 
-def compute_player_usage(session: Session) -> dict[int, PlayerUsage]:
+def compute_player_usage(
+    session: Session, use_minutes_model: bool = True
+) -> dict[int, PlayerUsage]:
     """Per-player attacking shares and minutes expectations, keyed by player id.
 
     Shares are normalised within each club, so they answer "what fraction of
@@ -120,7 +122,7 @@ def compute_player_usage(session: Session) -> dict[int, PlayerUsage]:
     if not players:
         return {}
 
-    minutes_by_player = compute_minutes_profiles(session)
+    minutes_by_player = compute_minutes_profiles(session, use_model=use_minutes_model)
     position_mean_cost = {
         position: statistics.fmean([p.now_cost for p in players if p.element_type == position])
         for position in (GOALKEEPER, DEFENDER, MIDFIELDER, FORWARD)

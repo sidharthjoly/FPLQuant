@@ -99,6 +99,7 @@ def project_horizon(
     session: Session,
     horizon: int = DEFAULT_HORIZON,
     decay: float = DEFAULT_DECAY,
+    use_minutes_model: bool = True,
 ) -> list[HorizonProjection]:
     """Project every player over the next `horizon` gameweeks.
 
@@ -111,7 +112,7 @@ def project_horizon(
 
     ratings = compute_team_ratings(session)
     rates_by_fixture = compute_fixture_rates(session, ratings)
-    usage_by_player = compute_player_usage(session)
+    usage_by_player = compute_player_usage(session, use_minutes_model=use_minutes_model)
     fixtures_by_team_event = get_upcoming_fixtures_by_team_event(session)
     events = upcoming_events(session, horizon)
     teams_by_id = {team.id: team for team in session.query(Team).all()}
