@@ -25,3 +25,16 @@
   pursued either. FPL's own `ict_index`/`creativity`/`threat`/`influence`
   and xG/xA remain the underlying-stats signal used throughout (form
   scoring, injury risk, similarity finder).
+
+- **vaastav/Fantasy-Premier-League** (github.com/vaastav/Fantasy-Premier-League)
+  — MIT-licensed archive of FPL's own API responses, season by season, going
+  back to 2016/17. Used *only* to build training data for the learned minutes
+  model (`fplquant-import-history`); nothing the app serves reads it, and it
+  lands in its own table rather than alongside live-ingested rows — the element
+  ids are not stable across seasons, so merging them would make the id
+  ambiguous. Seasons from 2022-23 are the default import, since those are the
+  ones publishing an explicit `starts` column. It also carries `saves`,
+  `yellow_cards`, `red_cards` and `bps`, which FPL's per-player summaries do
+  not expose and this schema therefore lacks — the card and save rates in
+  `engine/scoring.py` are currently league-typical constants, and this is the
+  data that could replace them with measured ones.

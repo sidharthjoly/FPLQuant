@@ -227,3 +227,82 @@ class TeamSnapshot(Base):
     strength_defence_away: Mapped[int] = mapped_column(Integer, default=0)
 
     team: Mapped[Team] = relationship()
+
+
+class HistoricalPlayerGameweek(Base):
+    """One player-fixture row from a *past* season, imported from a public archive.
+
+    Deliberately a separate table from `PlayerGameweekStat` rather than more
+    rows in it. The live table is written by the FPL API ingest and is the
+    single source of truth for everything the app serves; this one is bulk
+    historical data from a third party, covers players and clubs that no longer
+    exist in the current pool, and keys on FPL element ids that are *not stable
+    across seasons* — element 169 is a different footballer each year. Merging
+    them would put untrusted data on the path that serves predictions and make
+    the id ambiguous. Keeping them apart means nothing the app does today can
+    be affected by an import, and a bad import is a `DELETE FROM` away.
+
+    The archive carries several fields FPL's per-player summaries do not expose
+    and this schema therefore lacks entirely — `saves`, `yellow_cards`,
+    `red_cards`, `bps` — which is useful beyond the model it was imported for:
+    the save and card rates in `fplquant.engine.scoring` are currently
+    league-typical constants, and this is the data that could replace them with
+    measured ones.
+
+    Keyed on the fixture as well as the round, because a double gameweek gives
+    a player two rows in the same round — 983 of them in 2023-24 alone.
+    """
+
+    __tablename__ = "historical_player_gameweeks"
+    __table_args__ = (
+        UniqueConstraint(
+            "season", "element", "round", "fixture", name="uq_historical_player_fixture"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    season: Mapped[str] = mapped_column(String(16), index=True)  # e.g. "2023-24"
+    element: Mapped[int] = mapped_column(Integer, index=True)  # FPL id *within that season*
+    round: Mapped[int] = mapped_column(Integer, index=True)
+    fixture: Mapped[int] = mapped_column(Integer)
+
+    name: Mapped[str] = mapped_column(String(128))
+    # Nullable: the archive only began publishing these in 2021-22.
+    position: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    team: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    opponent_team: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    was_home: Mapped[bool | None] = mapped_column(nullable=True)
+    kickoff_time: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+
+    minutes: Mapped[int] = mapped_column(Integer, default=0)
+    # Nullable: only published from 2022-23. Earlier seasons fall back to the
+    # same minutes-based rule as `fplquant.lineup.starts.did_start`.
+    starts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_points: Mapped[int] = mapped_column(Integer, default=0)
+    bps: Mapped[int] = mapped_column(Integer, default=0)
+    bonus: Mapped[int] = mapped_column(Integer, default=0)
+
+    goals_scored: Mapped[int] = mapped_column(Integer, default=0)
+    assists: Mapped[int] = mapped_column(Integer, default=0)
+    clean_sheets: Mapped[int] = mapped_column(Integer, default=0)
+    goals_conceded: Mapped[int] = mapped_column(Integer, default=0)
+    own_goals: Mapped[int] = mapped_column(Integer, default=0)
+    saves: Mapped[int] = mapped_column(Integer, default=0)
+    yellow_cards: Mapped[int] = mapped_column(Integer, default=0)
+    red_cards: Mapped[int] = mapped_column(Integer, default=0)
+    penalties_missed: Mapped[int] = mapped_column(Integer, default=0)
+    penalties_saved: Mapped[int] = mapped_column(Integer, default=0)
+
+    influence: Mapped[float] = mapped_column(Float, default=0.0)
+    creativity: Mapped[float] = mapped_column(Float, default=0.0)
+    threat: Mapped[float] = mapped_column(Float, default=0.0)
+    ict_index: Mapped[float] = mapped_column(Float, default=0.0)
+    # Nullable: FPL only started publishing xG/xA in 2022-23.
+    expected_goals: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_assists: Mapped[float | None] = mapped_column(Float, nullable=True)
+    expected_goals_conceded: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    value: Mapped[int] = mapped_column(Integer, default=0)  # price, tenths of a million
+    selected: Mapped[int] = mapped_column(Integer, default=0)
+    transfers_in: Mapped[int] = mapped_column(Integer, default=0)
+    transfers_out: Mapped[int] = mapped_column(Integer, default=0)

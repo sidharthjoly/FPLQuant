@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = f"sqlite:///{REPO_ROOT / 'data' / 'fplquant.db'}"
     fpl_base_url: str = "https://fantasy.premierleague.com/api"
+    # Public MIT-licensed archive of past FPL seasons (vaastav/Fantasy-Premier-League),
+    # used only to build training data — see src/fplquant/data/history.py.
+    fpl_history_base_url: str = (
+        "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master"
+    )
     http_timeout_seconds: float = 15.0
     http_retries: int = 3
 

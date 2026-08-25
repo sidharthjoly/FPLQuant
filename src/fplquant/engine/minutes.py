@@ -31,6 +31,7 @@ informative, and a softmax is the natural way to read an ordering as a set of
 shares that has to add up to a fixed number of places.
 """
 
+import datetime as dt
 import math
 from dataclasses import dataclass
 
@@ -39,7 +40,11 @@ from sqlalchemy.orm import Session, selectinload
 from fplquant.form.fixtures import chance_of_playing
 from fplquant.lineup.formation import compute_team_shapes
 from fplquant.lineup.starts import compute_start_probabilities, did_start
+from fplquant.ml.features import MinutesFeatures
+from fplquant.ml.minutes_model import TrainedMinutesModel, load
 from fplquant.models.orm import Player
+from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER
+from fplquant.schedule import get_next_fixture_by_team
 
 # Softmax temperature over price, in tenths of a million. At £1.0m, a player
 # priced £1.0m above a teammate in the same position group carries e times
@@ -72,6 +77,9 @@ BENCH_APPEARANCE_PRIOR = 0.45
 BENCH_CREDIBILITY_MATCHES = 4.0
 
 
+POSITION_LABELS = {GOALKEEPER: "GK", DEFENDER: "DEF", MIDFIELDER: "MID", FORWARD: "FWD"}
+
+
 @dataclass(frozen=True)
 class MinutesProfile:
     player_id: int
@@ -86,6 +94,7 @@ class MinutesProfile:
     p_start: float
     p_bench_appearance: float
     expected_minutes: float
+    source: str = "heuristic"  # or "model", when a trained one is available
 
 
 def _softmax_weights(costs: list[int], temperature: float) -> list[float]:
@@ -101,6 +110,110 @@ def _softmax_weights(costs: list[int], temperature: float) -> list[float]:
         raise ValueError("temperature must be positive")
     top = max(costs)
     return [math.exp((cost - top) / temperature) for cost in costs]
+
+
+def _model_probabilities(
+    session: Session, players: list[Player], trained: TrainedMinutesModel
+) -> dict[int, float]:
+    """Start probability per player from the trained model.
+
+    Features are assembled into the same `MinutesFeatures` struct the training
+    frame uses and pushed through the same `feature_vector`, so the serving path
+    cannot drift from the training one — the failure mode this guards against
+    is silent, and no metric would show it.
+
+    A player with no upcoming fixture is left out rather than given a guess;
+    the caller falls back to the heuristic for them.
+    """
+    next_fixture = get_next_fixture_by_team(session)
+
+    groups: dict[tuple[int, int], list[Player]] = {}
+    for player in players:
+        groups.setdefault((player.team_id, player.element_type), []).append(player)
+    rank_and_share: dict[int, tuple[float, float]] = {}
+    for group in groups.values():
+        total = sum(p.now_cost for p in group) or 1
+        ordered = sorted(group, key=lambda p: -p.now_cost)
+        for position_rank, player in enumerate(ordered, start=1):
+            rank_and_share[player.id] = (float(position_rank), player.now_cost / total)
+
+    rows: list[MinutesFeatures] = []
+    ids: list[int] = []
+    for player in players:
+        fixture = next_fixture.get(player.team_id)
+        if fixture is None or fixture.event is None:
+            continue
+        stats = sorted(
+            player.gameweek_stats,
+            key=lambda s: (s.kickoff_time is None, s.kickoff_time, s.round),
+        )
+        last_kickoff = next((s.kickoff_time for s in reversed(stats) if s.kickoff_time), None)
+        rank, share = rank_and_share.get(player.id, (0.0, 0.0))
+        rows.append(
+            MinutesFeatures(
+                value=player.now_cost,
+                price_rank_in_group=rank,
+                price_share_in_group=share,
+                was_home=fixture.team_h_id == player.team_id,
+                round=fixture.event,
+                rounds_observed=len(stats),
+                recent_starts=[1 if did_start(s) else 0 for s in stats],
+                recent_minutes=[s.minutes for s in stats],
+                last_selected=stats[-1].selected if stats else None,
+                rest_days=_rest_days(fixture.kickoff_time, last_kickoff),
+                position=POSITION_LABELS.get(player.element_type),
+            )
+        )
+        ids.append(player.id)
+
+    return dict(zip(ids, trained.predict(rows), strict=True))
+
+
+def _rest_days(kickoff: dt.datetime | None, previous: dt.datetime | None) -> float:
+    """Days between a player's last match and the coming one; -1.0 if unknown.
+
+    Mirrors the training-side definition exactly, including the sentinel.
+    """
+    if kickoff is None or previous is None:
+        return -1.0
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=dt.UTC)
+    if previous.tzinfo is None:
+        previous = previous.replace(tzinfo=dt.UTC)
+    return (kickoff - previous).total_seconds() / 86400
+
+
+def _redistribute_unavailable(
+    estimates: list[float], availability: list[float], cap: float
+) -> list[float]:
+    """Move an unavailable player's start probability to his teammates.
+
+    Used when a trained model supplies the estimates, in place of normalising
+    the group to its formation's slots. The model's probabilities are already
+    calibrated in absolute terms, and forcing them onto a 4-4-2 prior actively
+    corrupts them: measured against the current pool that prior expects 1.83
+    forwards per club while the model expects 0.97 — because modern sides start
+    one striker and FPL classifies wingers as midfielders — so every forward in
+    the league was being scaled up by nearly a factor of two.
+
+    What the slots normalisation was genuinely good for is redistribution: when
+    a first choice is ruled out, somebody else plays. That property is kept here
+    without importing a formation prior, by handing exactly the probability mass
+    the unavailable players gave up to whoever is left, in proportion to their
+    own estimates. The group's total is therefore unchanged, which is the point
+    — the model chose it.
+    """
+    gated = [
+        estimate * available for estimate, available in zip(estimates, availability, strict=True)
+    ]
+    freed = sum(estimates) - sum(gated)
+    if freed <= 0:
+        return [min(cap, value) for value in gated]
+
+    share_base = sum(gated)
+    if share_base <= 0:
+        return [min(cap, value) for value in gated]
+    return [min(cap, value + freed * value / share_base) for value in gated]
 
 
 def _normalise_to_slots(values: list[float], slots: float, cap: float) -> list[float]:
@@ -150,12 +263,25 @@ def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
     slots_by_team = {
         shape.team_id: shape.slots for shape in compute_team_shapes(session, players=players)
     }
+    # A trained model replaces the price-and-history blend below when one
+    # exists, and is simply absent otherwise — see `ml.minutes_model.load`.
+    trained = load()
+    model_probabilities = _model_probabilities(session, players, trained) if trained else {}
+
     # The rotation nudge from the lineup module: rest days before this specific
     # kickoff, and whether their side has been shifting toward their position.
     # It is centred on 1.0, so inside a position group it only ever reorders —
     # the normalisation below strips out any overall level it might carry, which
     # is exactly right for a signal that was built to be relative.
-    rotation = {p.player_id: p.lineup_multiplier for p in compute_start_probabilities(session)}
+    #
+    # Skipped entirely when the model is driving, both because the model already
+    # reads rest days and recent selection, and because computing it walks every
+    # player's history for a number nothing would then use.
+    rotation = (
+        {}
+        if model_probabilities
+        else {p.player_id: p.lineup_multiplier for p in compute_start_probabilities(session)}
+    )
 
     groups: dict[tuple[int, int], list[Player]] = {}
     for player in players:
@@ -168,6 +294,7 @@ def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
         weight_total = sum(weights)
 
         blended: list[float] = []
+        availability_gates: list[float] = []
         priors: list[float] = []
         for player, weight in zip(group, weights, strict=True):
             prior = available_slots * weight / weight_total if weight_total > 0 else 0.0
@@ -179,14 +306,27 @@ def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
             observed = starts / matches if matches else 0.0
             credibility = matches / (matches + START_CREDIBILITY_MATCHES) if matches else 0.0
 
-            estimate = credibility * observed + (1 - credibility) * prior
-            # Availability is applied *before* normalisation on purpose: an
-            # injured player's share of the position group's slots is then
-            # redistributed to his teammates by the scaling below, which is
-            # what actually happens when a first choice is ruled out.
-            blended.append(estimate * chance_of_playing(player) * rotation.get(player.id, 1.0))
+            if player.id in model_probabilities:
+                # The model already sees rest days and recent selection, so the
+                # rotation nudge is not applied on top — it would charge the
+                # same evidence twice.
+                blended.append(model_probabilities[player.id])
+                availability_gates.append(chance_of_playing(player))
+            else:
+                estimate = credibility * observed + (1 - credibility) * prior
+                # Availability is applied *before* normalisation on purpose: an
+                # injured player's share of the position group's slots is then
+                # redistributed to his teammates by the scaling below, which is
+                # what actually happens when a first choice is ruled out.
+                blended.append(estimate * chance_of_playing(player) * rotation.get(player.id, 1.0))
+                availability_gates.append(1.0)
 
-        normalised = _normalise_to_slots(blended, available_slots, MAX_START_PROBABILITY)
+        if model_probabilities:
+            normalised = _redistribute_unavailable(
+                blended, availability_gates, MAX_START_PROBABILITY
+            )
+        else:
+            normalised = _normalise_to_slots(blended, available_slots, MAX_START_PROBABILITY)
 
         for player, prior, p_start in zip(group, priors, normalised, strict=True):
             stats = player.gameweek_stats
@@ -222,5 +362,6 @@ def compute_minutes_profiles(session: Session) -> dict[int, MinutesProfile]:
                 p_start=p_start,
                 p_bench_appearance=p_bench,
                 expected_minutes=expected_minutes,
+                source="model" if player.id in model_probabilities else "heuristic",
             )
     return profiles

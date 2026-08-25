@@ -126,6 +126,8 @@ whole engine still produces a usable projection, built entirely from priors.
 | `fplquant-projection` | Export a PCA/t-SNE projection of the player space |
 | `fplquant-project` | Multi-gameweek expected points, with team ratings and simulation |
 | `fplquant-plan` | Plan squad, transfers, captaincy, and chips over a horizon |
+| `fplquant-import-history` | Import past FPL seasons from the public archive, for training |
+| `fplquant-train-minutes` | Train and evaluate the learned start-probability model |
 | `fplquant-api` | Run the FastAPI backend and dashboard |
 
 Injury ingestion is deliberately separate from the main ingest: it scrapes
@@ -228,6 +230,42 @@ Gonzalo (FUL, £6.0m)
   GW2 vs SUN (A): 3.82 pts  [xG for 1.39, against 1.41, clean sheet 24%]
       appearance +1.83  goals +1.30  assists +0.40  clean sheet +0.00
       conceded +0.00  saves +0.00  bonus +0.40  cards -0.12
+```
+
+### The learned minutes model
+
+Minutes are the largest term in FPL scoring, and rotation depends on fixture
+congestion, rest, competition for the shirt and recent selection all
+interacting — the shape of problem a gradient-boosted tree handles better than
+a formula anyone would write by hand. So there is one, trained on four archived
+seasons (~114k player-gameweeks) and held out against the most recent:
+
+| on the held-out 2025-26 season | log loss | AUC | Brier | accuracy |
+| --- | --- | --- | --- | --- |
+| the hand-built heuristic | 0.379 | 0.893 | 0.121 | 0.825 |
+| gradient boosting | **0.251** | **0.952** | **0.078** | **0.892** |
+
+Calibration matters more here than accuracy, because the output is *multiplied*
+into an expected-points calculation rather than thresholded — a predicted 0.6
+has to mean 60%. On the holdout the deciles track the observed rate to within a
+point across the range (`fplquant-train-minutes` prints the curve).
+
+Three things keep it honest. The split is **by season, never at random**: one
+player's neighbouring gameweeks are strongly correlated, so a shuffled holdout
+mostly measures whether the model has memorised who plays. Every feature is
+**lagged** — the archive row for a gameweek contains that gameweek's minutes,
+and a model handed them scores beautifully and is worthless. And training and
+serving build their inputs through **one shared function**
+([`ml/features.py`](src/fplquant/ml/features.py)), because two independent
+implementations of "the same" feature vector drift silently and no metric shows
+it.
+
+The model is optional. With no trained artefact on disk the engine falls back
+to the heuristic, so a fresh clone still produces predictions.
+
+```bash
+uv run fplquant-import-history     # ~114k player-gameweeks, MIT-licensed archive
+uv run fplquant-train-minutes      # trains, evaluates, saves to data/models/
 ```
 
 ### Simulation

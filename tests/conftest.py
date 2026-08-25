@@ -36,3 +36,17 @@ def api_client(db_session: Session) -> Iterator[TestClient]:
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def heuristic_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Engine tests run against the hand-built minutes heuristic by default.
+
+    `compute_minutes_profiles` uses a trained model when one is present on
+    disk, and that artefact is a build output — so without this the suite would
+    take a different code path depending on whether anyone had run
+    `fplquant-train-minutes`, and the synthetic fixtures these tests build
+    would be fed to a model trained on real football. Tests that mean to
+    exercise the model patch this back explicitly.
+    """
+    monkeypatch.setattr("fplquant.engine.minutes.load", lambda *args, **kwargs: None)

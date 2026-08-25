@@ -99,3 +99,62 @@ def test_normalise_to_slots_redistributes_what_the_cap_spills() -> None:
 def test_normalise_to_slots_handles_a_group_with_nothing_in_it() -> None:
     assert _normalise_to_slots([], slots=2.0, cap=0.9) == []
     assert _normalise_to_slots([0.0, 0.0], slots=2.0, cap=0.9) == [0.0, 0.0]
+
+
+def test_redistributing_an_unavailable_players_share_keeps_the_group_total() -> None:
+    """The model's probabilities are calibrated in absolute terms, so the group
+    total is the model's own choice and has to survive. Only the mass an
+    unavailable player gives up moves, and it moves to his teammates."""
+    from fplquant.engine.minutes import _redistribute_unavailable
+
+    unchanged = _redistribute_unavailable([0.4, 0.3, 0.2], [1.0, 1.0, 1.0], cap=0.97)
+    assert unchanged == pytest.approx([0.4, 0.3, 0.2])
+
+    injured = _redistribute_unavailable([0.4, 0.3, 0.2], [0.0, 1.0, 1.0], cap=0.97)
+    assert injured[0] == 0.0
+    assert sum(injured) == pytest.approx(0.9)  # the group total is preserved
+    assert injured[1] > 0.3 and injured[2] > 0.2  # both teammates gain
+
+
+def test_redistribution_still_respects_the_cap() -> None:
+    """Preserving the total is not worth manufacturing a certainty. When the
+    freed mass would push someone past the cap it is clipped, and the group
+    ends up below its original total — which is the honest outcome."""
+    from fplquant.engine.minutes import _redistribute_unavailable
+
+    result = _redistribute_unavailable([0.9, 0.6, 0.3], [0.0, 1.0, 1.0], cap=0.97)
+
+    assert max(result) <= 0.97
+    assert sum(result) < 1.8
+
+
+def test_the_model_path_does_not_impose_a_formation_prior(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 4-4-2 prior expects 1.83 forwards per club; a model trained on real
+    football expects about one, because modern sides start a lone striker and
+    FPL classifies wingers as midfielders. Normalising the model's output onto
+    that prior scaled every forward in the league up by nearly a factor of two.
+
+    Under the model, a group of equally-rated players must keep the level the
+    model gave them rather than being stretched to fill the formation.
+    """
+
+    class _StubModel:
+        def predict(self, rows: list[object]) -> list[float]:
+            return [0.3] * len(rows)
+
+    teams = make_league(db_session, teams=2)
+    monkeypatch.setattr("fplquant.engine.minutes.load", lambda *a, **k: _StubModel())
+    monkeypatch.setattr(
+        "fplquant.engine.minutes._model_probabilities",
+        lambda session, players, trained: {p.id: 0.3 for p in players},
+    )
+
+    profiles = compute_minutes_profiles(db_session)
+
+    forwards = [profiles[p.id] for p in teams[0].players if p.element_type == FWD]
+    assert all(f.source == "model" for f in forwards)
+    # Three forwards at 0.3 each stay at 0.9 in total; the 4-4-2 prior would
+    # have stretched them to 2.0.
+    assert sum(f.p_start for f in forwards) == pytest.approx(0.9, abs=0.01)
