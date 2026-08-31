@@ -39,3 +39,9 @@ coverage.xml
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+
+# Scraped Transfermarkt data, exported for transfer to another database.
+# Not committed: it is a third party's data, and the SQLite file it comes from
+# is ignored for the same reason.
+injuries.sql
+injuries.sql.gz
