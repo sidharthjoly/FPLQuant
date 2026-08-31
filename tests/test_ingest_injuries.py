@@ -1,5 +1,6 @@
 import datetime as dt
 
+import requests
 from sqlalchemy.orm import Session
 
 from fplquant.data import ingest_injuries
@@ -281,3 +282,70 @@ class _WrongPlayerClient:
                 position="CF",
             )
         ]
+
+
+class _ExplodingClient:
+    """Transfermarkt answering 500 for one particular query.
+
+    Not invented for the test: a squad member is named
+    `Rodrigo 'Rodri' Hernandez Cascante`, and the apostrophe in the search URL
+    really does make the site return an Internal Server Error.
+    """
+
+    def __init__(self, blows_up_on: str) -> None:
+        self.blows_up_on = blows_up_on
+        self.seen: list[str] = []
+
+    def search_player(self, query: str) -> list[TransfermarktSearchResult]:
+        self.seen.append(query)
+        if self.blows_up_on in query:
+            raise requests.HTTPError("500 Server Error")
+        return [
+            TransfermarktSearchResult(
+                transfermarkt_id=hash(query) % 100000,
+                slug="someone",
+                name=query.replace("%20", " "),
+                club_name="Arsenal",
+                position="CM",
+            )
+        ]
+
+
+def test_one_players_failure_does_not_discard_the_whole_run(db_session: Session) -> None:
+    """A forty-minute scrape held in one transaction loses everything to a
+    single bad request. It did: an unhandled 500 on one name rolled back 425
+    players that had already resolved, leaving the table empty and nothing but
+    a traceback at the end of the job to say why."""
+    team = Team(fpl_id=1, name="Arsenal", short_name="ARS")
+    db_session.add(team)
+    db_session.flush()
+    names = ["Alpha", "Rodri", "Gamma", "Delta"]
+    for i, name in enumerate(names):
+        db_session.add(
+            Player(
+                fpl_id=100 + i,
+                team_id=team.id,
+                first_name=name,
+                second_name="Player",
+                web_name=name,
+                element_type=3,
+                now_cost=50,
+            )
+        )
+    db_session.flush()
+
+    players = db_session.query(Player).order_by(Player.fpl_id).all()
+    client = _ExplodingClient(blows_up_on="Rodri")
+
+    ingest_injuries._each(
+        db_session, players, ingest_injuries.resolve_transfermarkt_id, client, 0.0, "Resolved"
+    )
+
+    statuses = {p.web_name: p.transfermarkt_lookup_status for p in players}
+    # Everyone was attempted, not just those before the failure.
+    assert len(client.seen) == 4
+    # The three good ones survived; the failure is left retryable, not cached.
+    assert statuses["Alpha"] == "matched"
+    assert statuses["Gamma"] == "matched"
+    assert statuses["Delta"] == "matched"
+    assert statuses["Rodri"] == "unresolved"

@@ -2,6 +2,7 @@ import argparse
 import logging
 import time
 import urllib.parse
+from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
@@ -117,6 +118,57 @@ def clear_unmatched_cache(session: Session) -> int:
     return len(players)
 
 
+# How often to commit mid-pass. Scraping the pool is forty minutes of network
+# calls; holding all of it in one transaction means an interruption anywhere
+# throws away everything before it too.
+_COMMIT_EVERY = 25
+
+
+def _each(
+    session: Session,
+    players: list[Player],
+    step: Callable[[Session, TransfermarktClient, Player], None],
+    client: TransfermarktClient,
+    delay: float,
+    label: str,
+) -> None:
+    """Run `step` over every player, surviving individual failures.
+
+    One player must not be able to end the run, and the reason is not
+    hypothetical caution. A single squad member is named
+    `Rodrigo 'Rodri' Hernandez Cascante`; the apostrophe in the search query
+    makes Transfermarkt answer 500, the HTTPError propagated out of the loop,
+    and `session_scope` rolled the transaction back — discarding 425 players
+    that had already resolved perfectly well. The table stayed empty and the
+    only trace was a traceback at the end of a forty-minute job.
+
+    So a failed player is logged and skipped, leaving them `unresolved` so a
+    later run picks them up, and progress is committed as it goes rather than
+    held hostage to the last request succeeding.
+    """
+    total = len(players)
+    failures = 0
+    for i, player in enumerate(players, start=1):
+        try:
+            step(session, client, player)
+        except Exception:
+            failures += 1
+            logger.warning(
+                "%s failed for %s (%s); skipping",
+                step.__name__,
+                player.web_name,
+                player.team.short_name,
+                exc_info=True,
+            )
+        time.sleep(delay)
+        if i % _COMMIT_EVERY == 0:
+            session.commit()
+        if i % 25 == 0 or i == total:
+            logger.info("%s %d/%d players", label, i, total)
+    if failures:
+        logger.warning("%s: %d of %d players failed and were skipped", label, failures, total)
+
+
 def run_injury_ingest(
     client: TransfermarktClient | None = None,
     limit: int | None = None,
@@ -149,20 +201,11 @@ def run_injury_ingest(
             if limit is not None:
                 players = players.limit(limit)
             unresolved = players.all()
-
-            for i, player in enumerate(unresolved, start=1):
-                resolve_transfermarkt_id(session, client, player)
-                time.sleep(delay)
-                if i % 25 == 0 or i == len(unresolved):
-                    logger.info("Resolved %d/%d players", i, len(unresolved))
+            _each(session, unresolved, resolve_transfermarkt_id, client, delay, "Resolved")
 
         with session_scope() as session:
             matched = session.query(Player).filter_by(transfermarkt_lookup_status="matched").all()
-            for i, player in enumerate(matched, start=1):
-                sync_injury_history(session, client, player)
-                time.sleep(delay)
-                if i % 25 == 0 or i == len(matched):
-                    logger.info("Synced injury history for %d/%d players", i, len(matched))
+            _each(session, matched, sync_injury_history, client, delay, "Synced injury history for")
 
         with session_scope() as session:
             needs_nationality = (
@@ -170,11 +213,14 @@ def run_injury_ingest(
                 .filter_by(transfermarkt_lookup_status="matched", nationality=None)
                 .all()
             )
-            for i, player in enumerate(needs_nationality, start=1):
-                sync_nationality(session, client, player)
-                time.sleep(delay)
-                if i % 25 == 0 or i == len(needs_nationality):
-                    logger.info("Fetched nationality for %d/%d players", i, len(needs_nationality))
+            _each(
+                session,
+                needs_nationality,
+                sync_nationality,
+                client,
+                delay,
+                "Fetched nationality for",
+            )
     finally:
         if owns_client:
             client.close()
