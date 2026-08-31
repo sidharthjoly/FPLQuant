@@ -52,7 +52,8 @@ Cloud VM.
   nudge on expected points, and surfaced per player as odds to be named in the
   XI (with the fitness news applied as a hard gate on top).
 - **Transfer planner** — pulls a real FPL team by ID and recommends
-  transfers, accounting for -4 point hits, wildcards, and free hits.
+  transfers, accounting for -4 point hits, wildcards, and free hits, and
+  valuing the move on the starting XI rather than on all fifteen.
 - **Player similarity** — per-90 stat vectors, cosine k-NN, and PCA/t-SNE
   projections for finding comparable or cheaper alternatives.
 - **API and dashboard** — FastAPI backend with Redis caching, plus a

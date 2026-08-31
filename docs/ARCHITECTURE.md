@@ -99,7 +99,13 @@ that maximize next-match expected points *net of the real -4-per-transfer hit*
 beyond the manager's free transfers. Because making no transfers is always a
 free, feasible option, a transfer is only ever recommended when its expected
 gain outweighs its cost — "is this transfer worth the hit" is answered by the
-optimization itself, not a separate heuristic. Wildcard/Free Hit chips are
+optimization itself, not a separate heuristic.
+
+The eleven that score are chosen inside that program, with the bench discounted
+to `BENCH_WEIGHT`, exactly as the multi-period planner does it. Maximizing the
+fifteen-man total instead makes a substitute's projection count as much as a
+starter's, and the consequence was concrete: it spent a -4 hit swapping the
+*backup* goalkeeper for a better backup goalkeeper. Wildcard/Free Hit chips are
 supported (they lift the transfer limit and the hit entirely for that
 gameweek). Sell price is approximated as current market value, since FPL's
 sell-on-fee data isn't available without authenticating as the manager.
