@@ -1,0 +1,48 @@
+name: Injury ingest (server)
+
+# The `ingest_injuries.yml` workflow beside this one runs the same scrape on a
+# CI runner against a throwaway database and uploads the result as an artifact.
+# That is useful for local development and useless to the live site, which
+# reads its own SQLite file on the VM. The server is meant to keep itself fresh
+# via cron (`scripts/cron_ingest_injuries.sh`, Sundays 04:00 UTC), but a cron
+# that never fires looks exactly like a cron that fires and finds nothing, and
+# the symptom — an empty `injury_records` table and an injury-risk score built
+# from age and minutes alone — is invisible from outside.
+#
+# So this runs it where the data actually lives, on demand, and reports what
+# landed in the table afterwards.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  ingest-injuries:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scrape injury history on the server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Transfermarkt is rate-limited to ~1.5s per request and the pool is
+          # ~600 players across three passes, so this legitimately runs for the
+          # better part of an hour.
+          command_timeout: 90m
+          script: |
+            set -e
+            cd FPLQuant
+            docker compose exec -T api uv run fplquant-ingest-injuries
+            echo "--- resulting state ---"
+            docker compose exec -T api uv run python -c "
+            from fplquant.models.base import session_scope
+            from fplquant.models.orm import InjuryRecord, Player
+            with session_scope() as s:
+                total = s.query(InjuryRecord).count()
+                matched = s.query(Player).filter_by(transfermarkt_lookup_status='matched').count()
+                unmatched = s.query(Player).filter_by(transfermarkt_lookup_status='unmatched').count()
+                unresolved = s.query(Player).filter_by(transfermarkt_lookup_status='unresolved').count()
+                print(f'injury_records: {total}')
+                print(f'players matched/unmatched/unresolved: {matched}/{unmatched}/{unresolved}')
+                assert total > 0, 'injury_records is still empty - the scrape resolved nobody'
+            "

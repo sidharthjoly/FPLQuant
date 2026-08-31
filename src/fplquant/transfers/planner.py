@@ -6,6 +6,10 @@ import pulp
 from fplquant.optimizer.squad import optimize_squad
 from fplquant.optimizer.starting_xi import select_starting_xi
 from fplquant.optimizer.types import (
+    DEFENDER,
+    FORWARD,
+    GOALKEEPER,
+    MIDFIELDER,
     InfeasibleSquadError,
     OptimizedSquad,
     PlayerCandidate,
@@ -17,6 +21,21 @@ TRANSFER_HIT_COST = 4  # points deducted per transfer beyond the free ones (real
 # A tiny per-transfer penalty so a zero-value swap is never suggested just
 # because the solver was indifferent between it and keeping the incumbent.
 _CHURN_EPSILON = 0.01
+
+# What a benched player is worth. Not zero — the autosubs are real, and a
+# bench that can cover a late withdrawal has value — but nothing like a
+# starter's. Matches `fplquant.optimizer.multiperiod.DEFAULT_BENCH_WEIGHT`,
+# because the two solvers answering the same question differently is how a
+# planner and a transfer suggestion end up contradicting each other.
+BENCH_WEIGHT = 0.12
+
+STARTING_XI_SIZE = 11
+FORMATION_LIMITS: dict[int, tuple[int, int]] = {
+    GOALKEEPER: (1, 1),
+    DEFENDER: (3, 5),
+    MIDFIELDER: (2, 5),
+    FORWARD: (1, 3),
+}
 
 ChipContext = Literal["none", "wildcard", "free_hit"]
 
@@ -57,6 +76,10 @@ def propose_transfers(
     outweighs its cost — this *is* the "is it worth the hit" question,
     answered by construction rather than as an afterthought.
 
+    The gain is counted on the starting XI, with the bench discounted to
+    `BENCH_WEIGHT`. Counting all fifteen equally is what made this recommend
+    paying a hit to upgrade a substitute goalkeeper.
+
     `chip="wildcard"` or `"free_hit"` ignores `free_transfers` and the
     per-transfer hit entirely (both chips remove the transfer limit for the
     gameweek) and just rebuilds the strongest possible squad within budget.
@@ -78,8 +101,10 @@ def propose_transfers(
             [c for c in current_squad if c.player_id not in resulting_ids],
             [c for c in resulting.players if c.player_id not in current_ids],
         )
-        current_points = sum(c.predicted_points for c in current_squad)
-        gain = resulting.total_predicted_points - current_points
+        gain = (
+            xi.starting_predicted_points
+            - select_starting_xi(current_squad).starting_predicted_points
+        )
         return TransferPlan(
             chip=chip,
             transfers=pairs,
@@ -102,6 +127,15 @@ def propose_transfers(
 
     problem = pulp.LpProblem("fpl_transfer_planning", pulp.LpMaximize)
     pick = {c.player_id: pulp.LpVariable(f"pick_{c.player_id}", cat="Binary") for c in candidates}
+    # The eleven that actually score, chosen inside the optimization rather
+    # than after it. Maximizing the 15-man total instead treats a fourth
+    # goalkeeper exactly like a first-choice striker, and the consequence is
+    # not theoretical: asked to plan for a real squad, this solver spent a
+    # -4 hit swapping the *backup* keeper for a better backup keeper, a player
+    # guaranteed never to take the pitch, because his projection counted in
+    # full. `fplquant.optimizer.multiperiod` has always done this correctly;
+    # this is the same construction.
+    start = {c.player_id: pulp.LpVariable(f"start_{c.player_id}", cat="Binary") for c in candidates}
     hit_transfers = pulp.LpVariable("hit_transfers", lowBound=0, cat="Integer")
 
     transfers_made_expr = pulp.lpSum(
@@ -109,12 +143,25 @@ def propose_transfers(
     )
 
     problem += (
-        pulp.lpSum(pick[c.player_id] * c.predicted_points for c in candidates)
+        pulp.lpSum(
+            c.predicted_points
+            * (start[c.player_id] + BENCH_WEIGHT * (pick[c.player_id] - start[c.player_id]))
+            for c in candidates
+        )
         - TRANSFER_HIT_COST * hit_transfers
         - _CHURN_EPSILON * transfers_made_expr
     )
     problem += hit_transfers >= transfers_made_expr - free_transfers
     problem += pulp.lpSum(pick[c.player_id] * c.now_cost for c in candidates) <= budget
+
+    # A legal starting XI drawn from the squad.
+    for c in candidates:
+        problem += start[c.player_id] <= pick[c.player_id]
+    problem += pulp.lpSum(start[c.player_id] for c in candidates) == STARTING_XI_SIZE
+    for position, (low, high) in FORMATION_LIMITS.items():
+        in_position = [c for c in candidates if c.element_type == position]
+        problem += pulp.lpSum(start[c.player_id] for c in in_position) >= low
+        problem += pulp.lpSum(start[c.player_id] for c in in_position) <= high
 
     by_position: dict[int, list[PlayerCandidate]] = {}
     for c in candidates:
@@ -144,9 +191,14 @@ def propose_transfers(
 
     transfers_made = len(pairs)
     hit_cost = TRANSFER_HIT_COST * max(0, transfers_made - free_transfers)
-    current_points = sum(c.predicted_points for c in current_squad)
     resulting_points = sum(c.predicted_points for c in resulting_players)
-    gain_before = resulting_points - current_points
+
+    # Measured on the starting XI, because that is what the manager scores.
+    # Comparing 15-man totals overstates the gain by whatever the bench
+    # improved by — on a real squad that was 17.6 points of a reported 29.
+    resulting_xi = select_starting_xi(resulting_players)
+    current_xi = select_starting_xi(current_squad)
+    gain_before = resulting_xi.starting_predicted_points - current_xi.starting_predicted_points
     gain_after = gain_before - hit_cost
 
     resulting_squad = OptimizedSquad(
@@ -163,9 +215,14 @@ def propose_transfers(
         hit_cost=hit_cost,
         points_gain_before_hit=gain_before,
         points_gain_after_hit=gain_after,
-        worth_it=transfers_made > 0,
+        # Whether the move actually pays, not merely whether one was found.
+        # `transfers_made > 0` asserted nothing: the solver had already decided
+        # to transfer by the time it was read, so the flag was true whenever
+        # anyone looked at it and the docstring's promise that this answers
+        # "is it worth the hit" went unkept.
+        worth_it=transfers_made > 0 and gain_after > 0,
         resulting_squad=resulting_squad,
-        starting_xi=select_starting_xi(resulting_players),
+        starting_xi=resulting_xi,
     )
 
 

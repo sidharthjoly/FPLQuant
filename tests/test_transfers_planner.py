@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from fplquant.models.orm import Player, PlayerGameweekStat, Team
 from fplquant.optimizer.candidates import build_candidates_from_db
+from fplquant.optimizer.starting_xi import select_starting_xi
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER, PlayerCandidate
 from fplquant.transfers.planner import propose_transfers
 
@@ -262,3 +263,66 @@ def test_one_gameweek_of_history_does_not_trigger_a_wholesale_rebuild(
         f"for a {plan.hit_cost}-point hit"
     )
     assert plan.hit_cost <= 4
+
+
+def test_it_will_not_take_a_hit_to_upgrade_a_substitute_goalkeeper() -> None:
+    """The bug that made this recommend nine transfers for a -32 hit.
+
+    Only one goalkeeper starts. The second is on the bench every week and,
+    barring the first one's injury, scores nothing — so paying four points to
+    swap him for a better bench keeper is a guaranteed loss. The solver used to
+    do it anyway, because it maximised the fifteen-man total and a substitute's
+    projection counted exactly as much as a starter's.
+    """
+    squad = _base_squad()
+    # A far better keeper is available, and the budget is there to buy him.
+    upgrade = _player(99, GOALKEEPER, points=12.0, cost=50, team_id=99)
+
+    plan = propose_transfers(squad, all_candidates=[*squad, upgrade], bank=0, free_transfers=0)
+
+    keepers_in = [t for t in plan.transfers if t.in_.element_type == GOALKEEPER]
+    assert len(keepers_in) <= 1, "both keepers swapped — the bench one cannot pay for itself"
+    if keepers_in:
+        # If it does buy him, he must be the one who starts.
+        starters = {p.player_id for p in plan.starting_xi.starters}
+        assert keepers_in[0].in_.player_id in starters
+
+
+def test_the_reported_gain_is_what_the_starting_xi_actually_gains() -> None:
+    """A gain measured over all fifteen counts bench upgrades a manager will
+    never score. On a real squad that overstated a -32-hit plan by 17.6
+    points — reporting +29 for a move actually worth +11."""
+    squad = _base_squad()
+    pool = [*squad]
+    # Upgrade one outfielder who will start, and one who will not.
+    pool.append(_player(101, MIDFIELDER, points=15.0, cost=50, team_id=101))
+    pool.append(_player(102, GOALKEEPER, points=15.0, cost=50, team_id=102))
+
+    plan = propose_transfers(squad, all_candidates=pool, bank=0, free_transfers=5)
+
+    before = select_starting_xi(squad).starting_predicted_points
+    after = select_starting_xi(plan.resulting_squad.players).starting_predicted_points
+    assert plan.points_gain_before_hit == pytest.approx(after - before)
+    assert plan.points_gain_after_hit == pytest.approx(after - before - plan.hit_cost)
+
+
+def test_worth_it_is_false_when_the_hit_outweighs_the_gain() -> None:
+    """`worth_it` used to be `transfers_made > 0`, which asserted nothing —
+    the solver had already decided to transfer by the time anyone read it, so
+    the flag was true whenever it was looked at."""
+    squad = _base_squad()
+    plan = propose_transfers(squad, all_candidates=squad, bank=0, free_transfers=1)
+
+    assert plan.transfers_made == 0
+    assert plan.worth_it is False
+    assert plan.points_gain_after_hit == pytest.approx(0.0)
+
+
+def test_a_recommended_plan_always_reports_a_positive_net_gain() -> None:
+    squad = _base_squad()
+    pool = [*squad, _player(201, MIDFIELDER, points=20.0, cost=50, team_id=201)]
+
+    plan = propose_transfers(squad, all_candidates=pool, bank=0, free_transfers=0)
+
+    assert plan.worth_it is True
+    assert plan.points_gain_after_hit > 0

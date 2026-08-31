@@ -228,6 +228,16 @@ crontab -l   # confirm both lines are there
 times match the CI ingest workflows' own cadence — daily FPL data, weekly
 injury scrape since that's rate-limited scraping over the full player pool.)
 
+If the injury table is empty, the cron is the first thing to check —
+`crontab -l` and `systemctl is-active cron` — because a cron that never fires
+is indistinguishable from one that fires and finds nothing to do. The
+`Injury ingest (server)` workflow (Actions → Run workflow) runs the scrape on
+the VM on demand over the same SSH path as the deploy, prints the resulting
+row counts, and fails if the table is still empty afterwards. Note the
+`ingest_injuries.yml` workflow does *not* do this — it runs on a CI runner
+against a throwaway database and uploads an artifact, which never reaches the
+live site.
+
 Verify before waiting for the schedule — run a script directly and check
 its exit code:
 
