@@ -45,3 +45,9 @@ coverage.xml
 # is ignored for the same reason.
 injuries.sql
 injuries.sql.gz
+
+# SQLite writes these while a transaction is open; they are not state worth
+# tracking and they churn on every write.
+*.db-journal
+*.db-wal
+*.db-shm
