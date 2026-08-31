@@ -23,6 +23,12 @@ const startOddsValueEl = document.getElementById("start-odds-value");
 const startOddsFillEl = document.getElementById("start-odds-fill");
 const startOddsWordEl = document.getElementById("start-odds-word");
 const startFactorsEl = document.getElementById("start-factors");
+const newsCardEl = document.getElementById("news-card");
+const newsHeadlineEl = document.getElementById("news-headline");
+const newsStripEl = document.getElementById("news-strip");
+const newsNoteEl = document.getElementById("news-note");
+const pressCardEl = document.getElementById("press-card");
+const pressListEl = document.getElementById("press-list");
 const fixtureValueEl = document.getElementById("fixture-value");
 const fixtureNoteEl = document.getElementById("fixture-note");
 const fdrScaleEl = document.getElementById("fdr-scale");
@@ -199,6 +205,8 @@ function clearDetail() {
   startOddsFillEl.style.width = "0%";
   startOddsWordEl.textContent = "";
   clear(startFactorsEl);
+  newsCardEl.hidden = true;
+  pressCardEl.hidden = true;
   fixtureValueEl.textContent = "—";
   fixtureNoteEl.textContent = "";
   clear(fdrScaleEl);
@@ -227,6 +235,8 @@ async function selectPlayer(playerId) {
   renderHeader(player);
   renderInjuryGauge(player);
   renderStartOdds(player);
+  renderNews(player);
+  renderPress(player);
   renderNextFixture(player);
   await Promise.all([loadTrend(playerId, player), loadSimilar(playerId)]);
 }
@@ -401,6 +411,138 @@ function startFactor(label, value, note) {
   row.appendChild(labelEl);
   row.appendChild(valueEl);
   return row;
+}
+
+/** What the news says about the *rest* of the horizon, not just Saturday.
+ *
+ * "Odds to start" above already shows FPL's next-round percentage. The one
+ * thing that number cannot express is when a player is back, so this card
+ * exists only for the players whose news carries a date — a ban that expires,
+ * a stated return, a knock that will have cleared. Everyone else, including
+ * players who are definitely out but with no return date given, gets nothing
+ * here rather than a flat line dressed up as a finding. */
+function renderNews(player) {
+  clear(newsStripEl);
+  const news = player.news;
+  if (!news || news.category === "available" || !news.headline) {
+    newsCardEl.hidden = true;
+    return;
+  }
+  newsCardEl.hidden = false;
+  newsHeadlineEl.textContent = news.headline;
+
+  for (const entry of news.by_event) {
+    const column = document.createElement("div");
+    column.className = "fq-news__gw";
+
+    const bar = document.createElement("div");
+    bar.className = "fq-news__bar";
+    bar.style.height = `${Math.max(4, Math.round(entry.availability * 100))}%`;
+    bar.style.background =
+      entry.availability >= 0.6
+        ? "var(--fq-up)"
+        : entry.availability >= 0.25
+          ? "var(--fq-warn)"
+          : "var(--fq-down)";
+    bar.title = `GW${entry.event}: ${pct(entry.availability)} available`;
+
+    const label = document.createElement("div");
+    label.className = "fq-news__gw-label";
+    label.textContent = entry.event;
+
+    column.appendChild(bar);
+    column.appendChild(label);
+    newsStripEl.appendChild(column);
+  }
+
+  newsNoteEl.textContent = newsNote(news);
+}
+
+function newsNote(news) {
+  if (news.return_event !== null) {
+    return news.return_is_certain
+      ? `Ban ends before GW${news.return_event}.`
+      : `More likely than not to feature from GW${news.return_event}.`;
+  }
+  if (news.category === "departed") return "No longer in the league.";
+  if (!news.is_time_varying) {
+    return news.return_date === null
+      ? "No return date given, so availability is FPL's number in every gameweek."
+      : "Not expected back inside the horizon.";
+  }
+  return "Availability shown per gameweek; the first is FPL's own number.";
+}
+
+const SIGNAL_LABELS = {
+  return_date: "return date",
+  out_for_season: "out for the season",
+  ruled_out: "ruled out",
+  returning: "returning",
+};
+
+/** Press items naming this player, newest first.
+ *
+ * Shown with their match confidence rather than as bare facts. These come from
+ * public feeds and are resolved to a player by name, so a story matched on a
+ * surname plus a club mention is a judgement and should read like one. Only an
+ * item tagged "used in model" actually moved a projection — everything else is
+ * here to be read. */
+function renderPress(player) {
+  clear(pressListEl);
+  const articles = player.articles || [];
+  if (articles.length === 0) {
+    pressCardEl.hidden = true;
+    return;
+  }
+  pressCardEl.hidden = false;
+
+  for (const article of articles) {
+    const item = document.createElement("li");
+    item.className = "fq-press-item";
+
+    const title = document.createElement("div");
+    title.className = "fq-press-item__title";
+    const link = document.createElement("a");
+    link.href = article.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = article.title;
+    title.appendChild(link);
+
+    const meta = document.createElement("div");
+    meta.className = "fq-press-item__meta";
+    meta.appendChild(pressTag(article.source, "soft"));
+    if (article.published_at) {
+      meta.appendChild(pressTag(relativeDay(article.published_at), "soft"));
+    }
+    if (article.signal !== "none") {
+      meta.appendChild(pressTag(SIGNAL_LABELS[article.signal] || article.signal, "soft"));
+    }
+    meta.appendChild(
+      pressTag(
+        article.feeds_the_model ? "used in model" : `${Math.round(article.confidence * 100)}% match`,
+        article.feeds_the_model ? "used" : "soft"
+      )
+    );
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    pressListEl.appendChild(item);
+  }
+}
+
+function pressTag(text, kind) {
+  const tag = document.createElement("span");
+  tag.className = `fq-press-item__tag fq-press-item__tag--${kind}`;
+  tag.textContent = text;
+  return tag;
+}
+
+function relativeDay(iso) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days}d ago`;
 }
 
 function renderNextFixture(player) {

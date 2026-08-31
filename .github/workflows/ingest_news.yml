@@ -1,0 +1,61 @@
+name: Scheduled news ingest
+
+on:
+  schedule:
+    # Daily, 05:00 UTC — an hour after the main FPL ingest, so the player pool
+    # the resolver matches against is already current. Feeds carry a rolling
+    # window of a day or two, so a missed run loses little; a *silently* missed
+    # run would lose everything, which is what the check below is for.
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ingest-news:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Run FPL data ingest (the resolver matches against the player pool)
+        run: uv run fplquant-ingest
+
+      # --require-mentions exits non-zero on a run that fetched articles and
+      # resolved nobody. That is not a quiet news day, it is a broken resolver
+      # or an empty player table, and the two look identical from the outside.
+      # This project has already lost a month to a green job writing an empty
+      # table; the lesson is to assert the output moved, not that it is sane.
+      - name: Run news ingest
+        run: uv run fplquant-ingest-news --require-mentions
+
+      - name: Report what landed
+        run: |
+          uv run python -c "
+          from fplquant.models.base import session_scope
+          from fplquant.models.orm import NewsArticle, NewsMention
+          with session_scope() as s:
+              articles = s.query(NewsArticle).count()
+              mentions = s.query(NewsMention).count()
+              dated = s.query(NewsMention).filter_by(signal='return_date').count()
+              print(f'articles={articles} mentions={mentions} dated_returns={dated}')
+              assert articles > 0, 'no articles stored — every configured feed failed'
+          "
+
+      - name: Upload database snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: fplquant-db-news-${{ github.run_id }}
+          path: data/fplquant.db
+          retention-days: 14

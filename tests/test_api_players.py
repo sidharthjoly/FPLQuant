@@ -441,3 +441,69 @@ def test_start_odds_report_no_evidence_before_a_ball_is_kicked(
     assert odds["appearances"] == 0
     assert odds["evidence_weight"] == 0.0
     assert odds["baseline_probability"] == pytest.approx(0.4)  # the forward prior
+
+
+def _fixture(session: Session, home: Team, away: Team, fpl_id: int, event: int) -> Fixture:
+    fixture = Fixture(
+        fpl_id=fpl_id,
+        event=event,
+        team_h_id=home.id,
+        team_a_id=away.id,
+        team_h_difficulty=3,
+        team_a_difficulty=3,
+        kickoff_time=dt.datetime(2026, 9, 1, 14, tzinfo=dt.UTC) + dt.timedelta(days=7 * event),
+        finished=False,
+    )
+    session.add(fixture)
+    session.flush()
+    return fixture
+
+
+def test_the_player_detail_carries_the_news_and_its_per_gameweek_availability(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """The availability series shown on a profile has to be the one the model
+    acted on, and its first entry has to agree with `chance_of_playing` — a UI
+    showing two different numbers for the same round is worse than one number."""
+    team = _team(db_session)
+    other = _team(db_session, fpl_id=2)
+    player = _player(db_session, team, 1, "Banned")
+    player.status = "s"
+    player.news = "Suspended until 30 Aug"
+    player.chance_of_playing_next_round = 0
+    _player(db_session, other, 2, "Fit")
+    _fixture(db_session, team, other, fpl_id=1, event=1)
+    _fixture(db_session, team, other, fpl_id=2, event=2)
+    db_session.commit()
+
+    body = api_client.get(f"/players/{player.id}").json()
+
+    news = body["news"]
+    assert news["category"] == "suspended"
+    assert news["headline"] == "Suspended until 30 Aug"
+    assert news["return_is_certain"] is True
+    assert news["by_event"][0]["availability"] == body["chance_of_playing"] == 0.0
+
+
+def test_the_news_list_leaves_out_fit_players_and_undated_absences(
+    db_session: Session, api_client: TestClient
+) -> None:
+    team = _team(db_session)
+    other = _team(db_session, fpl_id=2)
+    fit = _player(db_session, team, 1, "Fit")
+    out = _player(db_session, team, 2, "Injured")
+    out.status = "i"
+    out.news = "Knee injury - Unknown return date"
+    out.chance_of_playing_next_round = 0
+    _player(db_session, other, 3, "Other")
+    for event in (1, 2, 3):
+        _fixture(db_session, team, other, fpl_id=event, event=event)
+    db_session.commit()
+
+    listed = {row["player_id"] for row in api_client.get("/news").json()}
+
+    assert out.id in listed
+    assert fit.id not in listed, "a fit player is not news"
+    # An injury with no return date is real news that still carries no *time*
+    # information, so it is left out of the actionable list.
+    assert api_client.get("/news", params={"only_time_varying": True}).json() == []

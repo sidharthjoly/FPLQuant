@@ -235,6 +235,12 @@ class PlayerSnapshot(Base):
     selected_by_percent: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(String(8), default="a")
     chance_of_playing_next_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The published news string, which `fplquant.news` reads for the one thing
+    # the percentage above cannot carry: when the player is due back. Nullable
+    # rather than defaulted to "" so a snapshot from before this was recorded
+    # stays distinguishable from a day on which a player simply had no news —
+    # the first is missing data, the second is a fit footballer.
+    news: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     player: Mapped[Player] = relationship()
 
@@ -375,3 +381,75 @@ class HistoricalPlayerGameweek(Base):
     # reference in the archive, but see `fplquant.backtest.replay` for why it
     # is excluded from the headline comparison.
     expected_points: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class NewsArticle(Base):
+    """One item from a public football news feed.
+
+    Stored rather than consumed in flight for three reasons. Deduplication: the
+    same story reappears in a feed for days, and a signal that re-fires every
+    morning is not new evidence. Audit: anything this layer does to a projection
+    has to be traceable to a URL a human can open, because the alternative is a
+    model that quietly moves for reasons nobody can reconstruct. And revocation:
+    when a publisher changes its wording and the resolver starts matching the
+    wrong footballer, the fix is a `DELETE` and a re-run, which is only possible
+    if the rows exist.
+
+    Keyed on (source, guid) rather than URL — feeds republish the same story
+    under tracking-parameterised links, and the guid is the field the format
+    provides precisely to identify an item across fetches.
+    """
+
+    __tablename__ = "news_articles"
+    __table_args__ = (UniqueConstraint("source", "guid", name="uq_news_article_source_guid"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(64), index=True)  # the feed's title or host
+    guid: Mapped[str] = mapped_column(String(512))
+    url: Mapped[str] = mapped_column(String(1024))
+    title: Mapped[str] = mapped_column(String(512))
+    summary: Mapped[str] = mapped_column(String(4096), default="")
+    published_at: Mapped[dt.datetime | None] = mapped_column(nullable=True, index=True)
+    fetched_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+
+    mentions: Mapped[list["NewsMention"]] = relationship(
+        back_populates="article", cascade="all, delete-orphan"
+    )
+
+
+class NewsMention(Base):
+    """A claim that one article is about one player, and what it says.
+
+    The two halves are deliberately separate columns, because they fail
+    separately and only their conjunction is allowed to move the model.
+    `confidence` is how sure the resolver is that this article is about *this
+    footballer*; `signal` and `return_date` are what the text says about their
+    availability. A mention with high confidence and no signal is a story about
+    a player that says nothing about their fitness — most of them — and a
+    mention with a signal and low confidence is the dangerous one, which is
+    stored and displayed and never consumed.
+
+    `match_basis` records *why* the resolver believed it, so a bad rule can be
+    found by querying rather than by re-deriving. See `fplquant.news.resolve`.
+    """
+
+    __tablename__ = "news_mentions"
+    __table_args__ = (UniqueConstraint("article_id", "player_id", name="uq_news_mention"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("news_articles.id"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)  # 0.0-1.0
+    matched_alias: Mapped[str] = mapped_column(String(128), default="")
+    match_basis: Mapped[str] = mapped_column(String(32), default="")  # full_name | alias_and_club
+
+    # What the article says about availability, if anything. "none" is by far
+    # the commonest and is not a failure — most football writing is not a
+    # fitness bulletin.
+    signal: Mapped[str] = mapped_column(String(32), default="none", index=True)
+    return_date: Mapped[dt.date | None] = mapped_column(nullable=True)
+    evidence: Mapped[str] = mapped_column(String(512), default="")  # the sentence it came from
+
+    article: Mapped[NewsArticle] = relationship(back_populates="mentions")
+    player: Mapped[Player] = relationship()

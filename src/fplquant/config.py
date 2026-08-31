@@ -28,6 +28,37 @@ class Settings(BaseSettings):
     )
     transfermarkt_request_delay_seconds: float = 1.5
 
+    # Public football news feeds, comma-separated. RSS deliberately, not page
+    # scraping: a feed is published *for* syndication, so it is a stable
+    # contract rather than markup that changes without notice, and it sidesteps
+    # the bot-blocking that stops the Transfermarkt scrape running anywhere but
+    # a laptop. Anything added here should be a real feed from a publisher that
+    # allows it — see docs/DATA_SOURCES.md.
+    news_feed_urls: str = (
+        "https://feeds.bbci.co.uk/sport/football/rss.xml,"
+        "https://www.theguardian.com/football/rss,"
+        "https://www.skysports.com/rss/12040"
+    )
+    # Identifies the project honestly rather than impersonating a browser. The
+    # Transfermarkt client does the opposite because it has to; a feed reader
+    # has no reason to.
+    news_user_agent: str = "FPLQuant/0.1 (+https://github.com/SidharthJoly/FPLQuant)"
+    news_request_delay_seconds: float = 1.0
+    # How far back a fetched article can be and still say anything about who is
+    # fit. A month-old "out for three weeks" is not news, it is history, and
+    # acting on it would put a returned player back on the sidelines.
+    news_article_max_age_days: int = 21
+    # How sure the resolver has to be that an article is about a given player
+    # before the match is allowed to reach the model. Below this the mention is
+    # still stored and displayed — it is evidence a human can read — but it
+    # cannot move a projection. See `fplquant.news.resolve`.
+    news_min_mention_confidence: float = 0.8
+    # Master switch for whether feed-derived signals reach the model at all.
+    # Turning it off leaves the ingest, the stored articles and the API intact
+    # and simply stops them being consumed, which is what you want the moment a
+    # publisher's wording starts producing matches you don't trust.
+    news_feeds_feed_the_model: bool = True
+
     redis_url: str = "redis://localhost:6379/0"
     optimize_cache_ttl_seconds: int = 3600
 
@@ -48,6 +79,10 @@ class Settings(BaseSettings):
         "https://fplquant.sidharthjoly.com,http://fplquant.sidharthjoly.com,"
         "https://sidharthjoly.github.io,http://localhost:8000,http://127.0.0.1:8000"
     )
+
+    @property
+    def news_feed_url_list(self) -> list[str]:
+        return [url.strip() for url in self.news_feed_urls.split(",") if url.strip()]
 
     @property
     def cors_allowed_origins_list(self) -> list[str]:

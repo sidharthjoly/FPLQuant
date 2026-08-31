@@ -19,6 +19,15 @@ points now — they are worth exactly the same — but because a projection five
 weeks out is less reliable than one for Saturday, and because you will get to
 revise the squad before it arrives. The discount is what stops the optimizer
 paying today for a fixture swing it can still buy into in a month's time.
+
+Availability is projected per gameweek too. It used to be computed once, from
+FPL's next-round percentage, and reused for every fixture in the horizon — so a
+player serving a ban that expires on Tuesday was unavailable for the following
+two months, and one carrying a knock this week was still carrying it in
+October. Both are wrong in the direction that matters most to a transfer
+decision, which is a commitment over exactly this horizon. See
+`fplquant.news.availability` for where the per-event numbers come from and for
+the contract that keeps the first gameweek identical to what FPL published.
 """
 
 from dataclasses import dataclass
@@ -29,6 +38,7 @@ from fplquant.engine.rates import FixtureRates, compute_fixture_rates, compute_t
 from fplquant.engine.scoring import PointsBreakdown, expected_points
 from fplquant.engine.usage import PlayerUsage, compute_player_usage, fixture_inputs
 from fplquant.models.orm import Player, Team
+from fplquant.news.availability import availability_by_event
 from fplquant.schedule import get_upcoming_fixtures_by_team_event, upcoming_events
 
 # How many gameweeks ahead to project by default. Five is about the point where
@@ -112,20 +122,30 @@ def project_horizon(
 
     ratings = compute_team_ratings(session)
     rates_by_fixture = compute_fixture_rates(session, ratings)
-    usage_by_player = compute_player_usage(session, use_minutes_model=use_minutes_model)
     fixtures_by_team_event = get_upcoming_fixtures_by_team_event(session)
     events = upcoming_events(session, horizon)
+    usage_by_event = _usage_by_event(session, events, use_minutes_model)
+    # The first event's usage is computed from today's published availability,
+    # so it is the right thing to report as *the* player's usage and the right
+    # thing to gate on. With no football left there is no first event, and
+    # every player still needs an entry to be reported with an empty horizon.
+    base_usage = (
+        usage_by_event[events[0]]
+        if events
+        else compute_player_usage(session, use_minutes_model=use_minutes_model)
+    )
     teams_by_id = {team.id: team for team in session.query(Team).all()}
 
     projections = []
     for player in session.query(Player).all():
-        usage = usage_by_player.get(player.id)
+        usage = base_usage.get(player.id)
         if usage is None:
             continue
         team_fixtures = fixtures_by_team_event.get(player.team_id, {})
 
         event_projections = []
         for event in events:
+            event_usage = usage_by_event[event].get(player.id, usage)
             fixture_projections = []
             for fixture in team_fixtures.get(event, []):
                 rates = rates_by_fixture.get(fixture.id)
@@ -133,7 +153,7 @@ def project_horizon(
                     continue
                 is_home = fixture.team_h_id == player.team_id
                 fixture_projections.append(
-                    _project_fixture(usage, rates, event, is_home, teams_by_id)
+                    _project_fixture(event_usage, rates, event, is_home, teams_by_id)
                 )
             event_projections.append(
                 EventProjection(
@@ -162,6 +182,39 @@ def project_horizon(
             )
         )
     return sorted(projections, key=lambda p: p.discounted_points, reverse=True)
+
+
+def _usage_by_event(
+    session: Session, events: list[int], use_minutes_model: bool
+) -> dict[int, dict[int, PlayerUsage]]:
+    """Player usage recomputed for each gameweek's availability.
+
+    Usage cannot simply be scaled after the fact, because it is *normalised
+    within a club*: a striker who is back from suspension in gameweek four
+    takes goal share back off the teammates who absorbed it while he was out,
+    so both sides of that trade have to be recomputed together. Scaling one
+    finished projection would credit the same goals twice.
+
+    Identical availability vectors share a single computation, which is what
+    keeps this from costing `horizon` times as much as it used to. In practice
+    availability only moves for the handful of players whose news carries a
+    date, so a five-gameweek horizon collapses to one or two distinct vectors
+    whenever nobody is on the way back.
+    """
+    availability = availability_by_event(session, events)
+    by_event: dict[int, dict[int, PlayerUsage]] = {}
+    computed: dict[tuple[tuple[int, float], ...], dict[int, PlayerUsage]] = {}
+    for event in events:
+        vector = availability.get(event, {})
+        key = tuple(sorted(vector.items()))
+        if key not in computed:
+            computed[key] = compute_player_usage(
+                session,
+                use_minutes_model=use_minutes_model,
+                availability=vector or None,
+            )
+        by_event[event] = computed[key]
+    return by_event
 
 
 def _project_fixture(

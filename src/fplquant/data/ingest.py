@@ -242,6 +242,7 @@ def _record_player_snapshots(
         snapshot.selected_by_percent = player.selected_by_percent
         snapshot.status = player.status
         snapshot.chance_of_playing_next_round = player.chance_of_playing_next_round
+        snapshot.news = player.news
     return len(session.query(Player).all())
 
 

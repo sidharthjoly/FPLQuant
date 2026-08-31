@@ -7,6 +7,7 @@ from fplquant.api.routers import (
     form,
     market,
     meta,
+    news,
     optimizer,
     planner,
     players,
@@ -42,6 +43,7 @@ app.include_router(players.router)
 app.include_router(form.router)
 app.include_router(risk.router)
 app.include_router(market.router)
+app.include_router(news.router)
 app.include_router(optimizer.router)
 app.include_router(planner.router)
 app.include_router(transfers.router)

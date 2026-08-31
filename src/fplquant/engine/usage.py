@@ -162,7 +162,9 @@ def _defensive_rate(element_type: int, stats: list[PlayerGameweekStat]) -> float
 
 
 def compute_player_usage(
-    session: Session, use_minutes_model: bool = True
+    session: Session,
+    use_minutes_model: bool = True,
+    availability: dict[int, float] | None = None,
 ) -> dict[int, PlayerUsage]:
     """Per-player attacking shares and minutes expectations, keyed by player id.
 
@@ -170,12 +172,21 @@ def compute_player_usage(
     this side's goals is this player expected to score" and sum to 1 across the
     club. A player with no minutes expectation — injured, suspended, or simply
     never picked — takes a share of zero, and the rest of the squad absorbs it.
+
+    `availability` overrides the fitness gate per player and is passed straight
+    through to `fplquant.engine.minutes`. It is what makes usage a function of
+    *which gameweek* is being projected rather than of the squad alone: the
+    shares have to be recomputed for a round a suspended player is back for,
+    because his return takes goals off the teammates who absorbed them. Scaling
+    a finished projection instead would leave those goals double-counted.
     """
     players = session.query(Player).options(selectinload(Player.gameweek_stats)).all()
     if not players:
         return {}
 
-    minutes_by_player = compute_minutes_profiles(session, use_model=use_minutes_model)
+    minutes_by_player = compute_minutes_profiles(
+        session, use_model=use_minutes_model, availability=availability
+    )
     position_mean_cost = {
         position: statistics.fmean([p.now_cost for p in players if p.element_type == position])
         for position in (GOALKEEPER, DEFENDER, MIDFIELDER, FORWARD)

@@ -1,8 +1,12 @@
-from typing import Literal
+import datetime as dt
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fplquant.optimizer.starting_xi import VALID_FORMATIONS
+
+if TYPE_CHECKING:
+    from fplquant.news.availability import PlayerAvailability
 
 _VALID_FORMATION_STRINGS = {f"{d}-{m}-{f}" for d, m, f in VALID_FORMATIONS}
 
@@ -78,6 +82,98 @@ class StartOddsOut(BaseModel):
     recent_team_shape: str  # ...and the shape it has been naming lately
 
 
+class EventAvailabilityOut(BaseModel):
+    """How available a player is in one specific gameweek of the horizon."""
+
+    event: int
+    availability: float  # 0.0-1.0
+
+
+class NewsOut(BaseModel):
+    """A player's published news, read for what it says about *when*.
+
+    `chance_of_playing` on the player is FPL's own number and covers the next
+    round only. This adds the part that number cannot express: what kind of
+    absence it is, whether a return date was given, and what each gameweek in
+    the horizon therefore looks like. See `fplquant.news`.
+
+    `by_event[0]` is always exactly the player's `chance_of_playing` — the layer
+    is not allowed to contradict FPL about the round FPL was describing — so a
+    UI can show the series without worrying that the two disagree.
+    """
+
+    category: str  # available | doubt | injured | suspended | departed | unknown
+    headline: str  # the text FPL published, verbatim
+    condition: str | None  # "Knee injury", "Knock", "Suspension"
+    return_date: dt.date | None  # stated return, where the news gives one
+    return_is_certain: bool  # true only for a ban, whose end date is a fact
+    return_event: int | None  # first round they are more likely than not to play
+    by_event: list[EventAvailabilityOut]
+    is_time_varying: bool  # whether availability actually moves over the horizon
+    # Set when the return date came from a press report rather than from FPL,
+    # so a UI can attribute it rather than presenting a journalist's estimate
+    # as the club's own line.
+    return_date_is_reported: bool = False
+
+    @classmethod
+    def from_availability(cls, entry: "PlayerAvailability", events: list[int]) -> "NewsOut":
+        """Build from a `fplquant.news.availability` entry.
+
+        A classmethod rather than a helper in one router, because both the
+        player detail and the news list need it and the two drifted apart the
+        first time they were written separately — the list quietly reported
+        every reported return date as official.
+        """
+        return cls(
+            category=entry.news.category.value,
+            headline=entry.news.headline,
+            condition=entry.news.condition,
+            return_date=entry.news.return_date,
+            return_is_certain=entry.news.return_is_certain,
+            return_event=entry.return_event,
+            by_event=[
+                EventAvailabilityOut(event=event, availability=entry.by_event[event])
+                for event in events
+            ],
+            is_time_varying=entry.is_time_varying,
+            return_date_is_reported=entry.news.return_date_is_reported,
+        )
+
+
+class NewsArticleOut(BaseModel):
+    """One press item this player was named in, with how sure we are it's them.
+
+    `confidence` is shown rather than hidden because it is the honest caveat: a
+    match made on a full name is near-certain, one made on a surname plus a club
+    mention is a judgement. `signal` says whether the article carried anything
+    about availability at all — most do not — and only `return_date` ever
+    reaches a projection. See `fplquant.news.resolve`.
+    """
+
+    title: str
+    url: str
+    source: str
+    published_at: dt.datetime | None
+    confidence: float
+    match_basis: str
+    signal: str  # return_date | out_for_season | ruled_out | returning | none
+    return_date: dt.date | None
+    evidence: str
+    feeds_the_model: bool
+
+
+class PlayerNewsOut(BaseModel):
+    """One player on the league-wide news list. See the `/news` endpoint."""
+
+    player_id: int
+    web_name: str
+    team_short_name: str
+    element_type: int
+    now_cost: int
+    chance_of_playing: float  # FPL's own number, for the next round
+    news: NewsOut
+
+
 class PlayerDetailOut(PlayerOut):
     form_score: FormScoreOut | None = None
     injury_risk: InjuryRiskOut | None = None
@@ -86,6 +182,8 @@ class PlayerDetailOut(PlayerOut):
     fixture_difficulty: int | None = None
     chance_of_playing: float = 1.0
     start_odds: StartOddsOut | None = None
+    news: NewsOut | None = None
+    articles: list[NewsArticleOut] = Field(default_factory=list)
 
 
 class PlayerGameweekStatOut(BaseModel):

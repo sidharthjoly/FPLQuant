@@ -36,6 +36,11 @@ Cloud VM.
   number.
 - **Multi-gameweek horizon** — projections fixture by fixture over the next N
   rounds, including double and blank gameweeks.
+- **News layer** — FPL's published player news parsed for the one thing its
+  next-round percentage cannot express: *when* a player is back. Availability
+  is then projected per gameweek and per club kickoff, so a ban expiring on the
+  Tuesday stops writing a player off for the next two months. Pinned to FPL's
+  own number for the next round, so nothing is discounted twice.
 - **Squad optimizer** — ILP selection (PuLP) under budget, position, and
   club-count constraints, with an optional Sharpe-style risk-adjusted
   objective.
@@ -83,6 +88,7 @@ uv sync                       # install dependencies into .venv
 cp .env.example .env          # optional — defaults work out of the box
 uv run alembic upgrade head   # create data/fplquant.db and apply the schema
 uv run fplquant-ingest        # pull live data from the FPL API (~1-2 min)
+uv run fplquant-ingest-news   # fetch football news feeds for return dates
 uv run fplquant-optimize      # select an optimal 15-man squad within budget
 uv run fplquant-api           # serve the dashboard at http://localhost:8000
 ```
@@ -269,6 +275,129 @@ Gonzalo (FUL, £6.0m)
       appearance +1.83  goals +1.30  assists +0.40  clean sheet +0.00
       conceded +0.00  saves +0.00  bonus +0.40  cards -0.12
 ```
+
+### News, and when a player is actually back
+
+FPL publishes two things about a player's fitness: a percentage
+(`chance_of_playing_next_round`) and a sentence (`news`). The model used only
+the percentage, and applied it to *every* gameweek in the horizon. So a player
+serving a ban that expired on the Tuesday was worth exactly zero points over the
+next five rounds — and zero is not merely a low rank. The multi-gameweek
+planner's candidate pool is trimmed on horizon value, so a player worth nothing
+is one it can never choose, whatever happens after the ban ends.
+
+The sentence is what fixes that, because it is the only place a *date* appears.
+It is also not really free text: five templates covered all 118 non-empty news
+strings in the pool, with none left unparsed.
+
+```
+Knee injury - Unknown return date
+Ankle injury - Expected back 14 Sep
+Thigh injury - 75% chance of playing
+Suspended until 19 Sep
+Has joined Paris Saint-Germain permanently
+```
+
+`src/fplquant/news/` reads them and projects availability per gameweek, against
+each club's own kickoff — a round is spread over three or four days, so a ban
+ending on the Saturday clears a side playing Sunday and not one playing Friday,
+and both are the same gameweek. Two rules keep it honest:
+
+- **The next round is FPL's number, verbatim.** Not recomputed, taken. FPL's
+  percentage *is* the press-conference summary this parses, so discounting it a
+  second time would charge the same evidence twice — the mistake the lineup and
+  fixture layers each warn about at length. The layer can only ever say
+  something about rounds two onward.
+- **It can only give availability back, never take it away.** Every projection
+  is floored at the published number. A spurious zero silently deletes a fit
+  player from the squad; a spurious one merely makes the model optimistic about
+  somebody FPL has already flagged.
+
+The three shapes of absence run on different clocks, and blending them would be
+the whole mistake. A **suspension** ends on a date that is a fact, so it steps
+to full availability the moment it expires. An **injury with a stated return
+date** ends on a club's estimate, and estimates slip late far more often than
+early, so the date is treated as optimistic and recovery ramps in over a window
+that widens the further out the forecast is. A **doubt** — a percentage, no date
+— is a statement about one match, so it recovers over a window set by the grade:
+a 75% knock clears in a fortnight, a 25% one in six weeks. Everything else keeps
+the published number in every gameweek, including the commonest case of all, an
+injury with no return date given.
+
+The numbers are threaded into `compute_player_usage` rather than multiplied onto
+a finished projection, and that is not an implementation detail. Shares are
+normalised within a club, so a striker coming back has to take goal share *off*
+whoever absorbed it while he was out; scaling one side of that trade after the
+fact would count those goals twice. On the live pool this moves 29 players'
+availability and 156 players' five-gameweek totals — the second number is larger
+than the first precisely because of the teammates.
+
+What it changes downstream, measured rather than assumed: the multi-gameweek
+planner's candidate pool shifts by one player, and a premium ruled out for a
+single round flips from sold to held. On today's pool nobody with a dated
+absence is good enough for that to bite — the ten players with return dates are
+fringe ones, and selling a £5.0m defender who misses a week is still right. The
+squad advice therefore does not change today; the projections it rests on do,
+and the case it was built for is a suspended captain rather than a fourth-choice
+full-back. Note the *single-gameweek* transfer planner behind `/transfers` is untouched by
+design: it scores the next match only, via `form/fixtures.py`, where FPL's own
+percentage is already exactly right.
+
+`GET /news?only_time_varying=true` returns the subset worth acting on, ordered
+by when each player is back.
+
+### Reading the press for the dates FPL doesn't give
+
+47 of those 118 FPL news strings read "Unknown return date". For those players
+the official feed says *that* they are out and never *when* they are back — and
+a press report of "out for six weeks" is the only estimate that exists anywhere.
+`fplquant-ingest-news` fetches public RSS (BBC Sport, the Guardian, Sky Sports)
+daily, resolves items to players, and reads them for a date.
+
+RSS rather than page scraping, deliberately: a feed is published in order to be
+syndicated, so it is a contract rather than markup that changes without notice,
+it carries a stable item id and a timestamp, and it does not attract the
+bot-blocking that stops this project's Transfermarkt scrape running anywhere but
+a laptop.
+
+Matching free text to a six-hundred-name pool is the dangerous part, because
+availability is a hard gate: a wrong match doesn't add noise, it attaches one
+player's fitness bulletin to another player's projection. So four independent
+gates stand between an article and a number, and all four have to open:
+
+1. **The match is strong.** A full name resolves alone; a surname needs the club
+   named in the same text; names that collide with ordinary English or with a
+   stadium only ever resolve in full. Matching is whole-word — "Sarr" does not
+   find "Sarri". These rules were not precautions: run over a day of live feeds
+   without them, a bare-surname tier matched "Old Trafford" to Leeds' goalkeeper.
+2. **The text carries a date.** "Back in training" is stored, displayed, and
+   consumed by nothing. Durations are read at their upper bound, so "two to
+   three weeks" is three — being early about a return is the expensive mistake.
+3. **Confidence clears the threshold** (0.8 by default). Below it the mention is
+   still in the database and the API, with its confidence shown, and cannot move
+   a number.
+4. **FPL already ruled the player out and left the date blank.** A report cannot
+   change a category, touch a fit player, override FPL's own return date, or
+   contradict FPL about the next round.
+
+On top of all four, the floor from the previous section still holds — so even a
+wrong match at full confidence can only affect somebody already at zero, and can
+only move them upward. `FPLQUANT_NEWS_FEEDS_FEED_THE_MODEL=false` keeps the
+ingest and the API and stops consumption dead.
+
+Articles and mentions are stored rather than consumed in flight, so anything
+that moved is traceable to a URL and a bad rule is a `DELETE` away. The player
+explorer shows the items with their match confidence, tagging the ones that
+actually fed the model. Nothing that serves a request touches the network.
+
+```bash
+uv run fplquant-ingest-news                     # fetch, resolve, store, prune
+uv run fplquant-ingest-news --require-mentions  # ...and fail if it matched nobody
+```
+
+That last flag is the point of the daily job. This project has already lost a
+month to a green workflow writing an empty table, and a broken resolver looks
+exactly like a quiet news day unless something asserts otherwise.
 
 ### The learned minutes model
 
@@ -520,6 +649,7 @@ src/fplquant/
   data/             FPL API client + ingestion pipeline
   form/             EWMA-based form scoring (points + underlying stats)
   lineup/           inferred formations, start probability, fatigue
+  news/             FPL news + RSS feeds -> per-gameweek availability
   optimizer/        ILP squad selection (PuLP), budget/position/club constraints
   risk/             injury risk scoring + risk-adjusted expected points
   market/           price/ownership momentum, volatility, teammate correlation
@@ -534,9 +664,11 @@ tests/              pytest suite (mirrors src/ layout)
 
 ## Data sources
 
-The FPL API (prices, points, fixtures, xG/xA/ICT) and Transfermarkt (injury
-history, scraped and fuzzy-matched to FPL players). Full breakdown, including
-sources investigated and not pursued, in
+The FPL API (prices, points, fixtures, xG/xA/ICT, and the published player
+news), public football RSS feeds (return dates for players FPL rules out without
+one), and Transfermarkt (injury history, scraped and fuzzy-matched to FPL
+players). Full breakdown, including the resolution rules and the sources
+investigated and not pursued, in
 [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md).
 
 ## Development

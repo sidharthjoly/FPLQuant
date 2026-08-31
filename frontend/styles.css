@@ -324,6 +324,28 @@ h1, h2, h3, h4 { font-weight: 500; margin: 0; }
 .fq-start-factor__value { color: var(--fq-text); font-variant-numeric: tabular-nums; text-align: right; }
 .fq-start-factor__note { display: block; font-size: 10.5px; color: var(--fq-faint); font-variant-numeric: normal; }
 
+/* Availability across the horizon: one column per gameweek, filled from the
+   bottom. Reads as a recovery curve rather than as five separate numbers. */
+.fq-news__headline { font-size: 13px; line-height: 1.45; color: var(--fq-text); }
+.fq-news__strip { display: flex; gap: 4px; align-items: flex-end; height: 40px; margin: 14px 0 8px; }
+.fq-news__gw { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+.fq-news__bar { width: 100%; border-radius: 2px; background: var(--fq-line-2); min-height: 2px; }
+.fq-news__gw-label { font-size: 9.5px; color: var(--fq-faint); font-variant-numeric: tabular-nums; }
+.fq-news__note { font-size: 11.5px; color: var(--fq-dim); }
+
+/* Press mentions. The confidence tag is not decoration: a surname-plus-club
+   match is a judgement, and saying so is the difference between a caveat and a
+   claim. */
+.fq-press { list-style: none; margin: 0; padding: 0; }
+.fq-press-item + .fq-press-item { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--fq-line); }
+.fq-press-item__title { font-size: 12.5px; line-height: 1.4; }
+.fq-press-item__title a { color: var(--fq-text); text-decoration: none; }
+.fq-press-item__title a:hover { text-decoration: underline; }
+.fq-press-item__meta { margin-top: 4px; font-size: 10.5px; color: var(--fq-faint); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.fq-press-item__tag { padding: 1px 5px; border-radius: 3px; border: 1px solid var(--fq-line-2); }
+.fq-press-item__tag--used { color: var(--fq-up); border-color: currentColor; }
+.fq-press-item__tag--soft { color: var(--fq-faint); }
+
 /* ============ Explorer ============ */
 .fq-layout-explorer { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
 @media (max-width: 900px) { .fq-layout-explorer { grid-template-columns: 1fr; } }

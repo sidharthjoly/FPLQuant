@@ -86,10 +86,99 @@ not just a season-long average:
   surfaced alongside it for display.
 - **Venue**: home/away, since those ratings differ by venue.
 - **Chance of playing**: FPL's own `chance_of_playing_next_round` when set
-  (press-conference news), else inferred from `status`.
+  (press-conference news), else inferred from `status`. Next-round only — the
+  news layer below extends it across the horizon, and deliberately leaves this
+  path untouched.
 
 This feeds the risk-adjusted scorer too (`src/fplquant/risk/adjusted.py`), so
 "risk-adjusted" and "fixture-adjusted" compose rather than compete.
+
+
+## The news layer
+
+`chance_of_playing_next_round` is a single number, and the horizon projection
+used to apply it to every gameweek in a five-week window. A player serving a
+ban that expired on the Tuesday was therefore worth zero points until February;
+one carrying a knock this week was still carrying it in October. Both are wrong
+in the direction that matters most to a transfer, which is a commitment over
+exactly that horizon — and zero specifically, because
+`build_horizon_candidates_from_db` trims the pool on horizon value, so a player
+worth nothing is one the multi-period program can never select.
+
+`src/fplquant/news/` supplies the missing dimension. It parses FPL's published
+`news` string — which is templated, not free text: five shapes covered all 118
+non-empty strings in the pool — into a category, a condition, and a return date
+where one is stated. `availability.py` turns that into availability *per
+gameweek*, evaluated against each club's own kickoff, since a round spans three
+or four days and a ban ending on the Saturday clears a club playing Sunday and
+not one playing Friday.
+
+Two rules make it safe to compose with everything already in the model:
+
+- **It cannot contradict FPL about the next round.** Availability at a player's
+  next actual match is `chance_of_playing` verbatim, taken rather than
+  recomputed. FPL's percentage *is* the press-conference summary, so discounting
+  it a second time would charge the same evidence twice.
+- **It can only give availability back.** Every projection is floored at the
+  published number, so the layer can restore a suspended player once his ban
+  expires but can never newly rule anyone out. A spurious zero silently deletes
+  a fit player from the squad; a spurious one only makes the model optimistic
+  about somebody FPL has already flagged.
+
+Three shapes of news behave differently, and conflating them would be the whole
+mistake. A **suspension** ends on a date that is known, so it steps cleanly to
+full availability. An **injury with a stated return date** ends on a club's
+estimate, and estimates slip late far more often than early, so the date is read
+as optimistic and recovery ramps in over a window that widens with the forecast
+horizon. A **doubt** — a percentage with no date — is a statement about one
+match, so availability recovers toward a ceiling over a window set by the grade.
+Everything else, including an injury with no return date (47 of 118 strings) and
+any wording the parser does not recognise, keeps the published number in every
+gameweek.
+
+The numbers flow through `engine/minutes.py` and `engine/usage.py` into
+`engine/horizon.py`, which recomputes usage once per distinct availability
+vector. It has to be recomputed rather than scaled afterwards: shares are
+normalised within a club, so a striker returning takes goal share back *off*
+the teammates who absorbed it, and scaling one side of that trade would count
+those goals twice. Everything downstream of the horizon follows: the candidate
+pool (`optimizer/candidates.py`), the multi-period program
+(`optimizer/multiperiod.py`), `fplquant-plan` and `/plan`.
+
+The **single-gameweek** transfer planner (`transfers/planner.py`, served at
+`/transfers`) is deliberately *not* affected. It scores the next match only, through
+`form/fixtures.py`, where FPL's published percentage is already the right and
+complete answer. Only the multi-gameweek path has a horizon for this layer to
+say anything about.
+
+### Two sources, and they are not peers
+
+`news/sources.py` defines a `NewsSource` protocol with an `authoritative` flag,
+and that flag is the whole safety design. `FPLPlayerNewsSource` is
+authoritative: FPL's percentage is the official line and the number the rest of
+the model already consumes. `ExternalNewsSource` is supplementary: it reads
+press items that `fplquant-ingest-news` stored from public RSS feeds
+(`news/feeds.py`), resolved to players by `news/resolve.py` and read for a
+return date by `news/extract.py`.
+
+A supplementary source may contribute exactly one thing — a return date for a
+player FPL has ruled out *without* giving one, which is 47 of the 118 non-empty
+news strings in the pool. `merge_reported_return` in `news/availability.py`
+enforces it: category, condition and next-round availability always come from
+FPL, so a misresolved article cannot change what kind of absence a player has,
+cannot touch a fit player, and cannot rule anybody out. Combined with the floor
+("only ever give availability back"), the worst a wrong match can do is make the
+model optimistic about somebody already at zero.
+
+A reported date is also believed more slowly than an official one: the slippage
+window around it is stretched by `REPORTED_RETURN_SLIP_MULTIPLIER`, because a
+journalist relaying a club's estimate is a real signal and a second-hand one.
+
+The ingest is a separate process from the reading side on purpose — nothing that
+serves a request touches the network — and it fails loudly when it fetches
+articles and resolves nobody, because a broken resolver and a quiet news day are
+indistinguishable from the outside. See `docs/DATA_SOURCES.md` for the feeds and
+the resolution rules, and `DEPLOYMENT.md` for the daily cron.
 
 The **transfer planner** (`src/fplquant/transfers/`) pulls a manager's current
 squad from their public FPL team ID — no login needed, the same data FPL's own
@@ -202,8 +291,8 @@ are by construction ones the objective would never have picked.
 ## Point-in-time snapshots
 
 `Player` and `Team` are current-state rows: `now_cost`, `ep_next`, `status`,
-`chance_of_playing_next_round`, `form`, `selected_by_percent` and the team
-strength ratings are all overwritten on every ingest. The database therefore
+`chance_of_playing_next_round`, `news`, `form`, `selected_by_percent` and the
+team strength ratings are all overwritten on every ingest. The database therefore
 always knows what is true today and never what was true before a past
 deadline.
 

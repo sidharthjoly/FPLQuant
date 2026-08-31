@@ -195,9 +195,10 @@ separate, CI-only DB snapshot (useful for local dev/testing), and it doesn't
 touch the deployed server. **The live server keeps itself fresh via cron**,
 running the same CLI commands directly against the running containers:
 
-`scripts/cron_ingest.sh` and `scripts/cron_ingest_injuries.sh` wrap
-`docker compose exec -T api uv run fplquant-ingest[-injuries]` (`-T` disables
-TTY allocation, needed since cron has no terminal). Set up on the VM:
+`scripts/cron_ingest.sh`, `scripts/cron_ingest_injuries.sh` and
+`scripts/cron_ingest_news.sh` wrap
+`docker compose exec -T api uv run fplquant-ingest[-injuries|-news]` (`-T`
+disables TTY allocation, needed since cron has no terminal). Set up on the VM:
 
 ```bash
 cd ~/FPLQuant && git pull   # pick up the scripts if they weren't there at clone time
@@ -218,15 +219,24 @@ default — set the crontab non-interactively instead:
 crontab -l 2>/dev/null > /tmp/mycron || true
 cat >> /tmp/mycron <<'EOF'
 0 3 * * *   /home/ubuntu/FPLQuant/scripts/cron_ingest.sh >> /home/ubuntu/ingest.log 2>&1
+0 4 * * *   /home/ubuntu/FPLQuant/scripts/cron_ingest_news.sh >> /home/ubuntu/ingest_news.log 2>&1
 0 4 * * 0   /home/ubuntu/FPLQuant/scripts/cron_ingest_injuries.sh >> /home/ubuntu/ingest_injuries.log 2>&1
 EOF
 crontab /tmp/mycron
-crontab -l   # confirm both lines are there
+crontab -l   # confirm all three lines are there
 ```
 
 (Adjust the path if the repo isn't cloned to `/home/ubuntu/FPLQuant`. The
-times match the CI ingest workflows' own cadence — daily FPL data, weekly
-injury scrape since that's rate-limited scraping over the full player pool.)
+times match the CI ingest workflows' own cadence — daily FPL data, daily news
+feeds an hour later so the resolver matches against a current player pool, and
+a weekly injury scrape since that's rate-limited scraping over the full pool.)
+
+Unlike the injury scrape, the news ingest **does** work from the VM: it reads
+public RSS feeds rather than a site that blocks datacentre IPs. It exits
+non-zero when it fetches articles and resolves nobody — a broken resolver and a
+quiet news day are indistinguishable from the outside, and this project has
+already lost a month to a green job writing an empty table. Check
+`~/ingest_news.log` for the per-run counts.
 
 If the injury table is empty, the cron is the first thing to check —
 `crontab -l` and `systemctl is-active cron` — because a cron that never fires

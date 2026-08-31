@@ -254,16 +254,35 @@ def _normalise_to_slots(values: list[float], slots: float, cap: float) -> list[f
     return result
 
 
-def compute_minutes_profiles(session: Session, use_model: bool = True) -> dict[int, MinutesProfile]:
+def compute_minutes_profiles(
+    session: Session,
+    use_model: bool = True,
+    availability: dict[int, float] | None = None,
+) -> dict[int, MinutesProfile]:
     """Absolute start probabilities and expected minutes, keyed by player id.
 
     `use_model=False` forces the hand-built heuristic. Used by the backtest,
     which replays seasons the model was trained on — leaving it enabled would
     let it recognise the gameweeks it is being tested against.
+
+    `availability` overrides the fitness gate per player, which is what lets
+    the same profile be computed for a gameweek other than the next one: a
+    suspension that expires in a fortnight makes a player unavailable now and
+    available then, and `fplquant.news.availability` is what supplies the two
+    numbers. Omitted, every player is gated on `chance_of_playing` exactly as
+    before — the override never invents a value for a player it has no entry
+    for. Note where the gate is applied: *before* the group is normalised, so
+    a player the news rules out hands his slot to a teammate rather than
+    deleting it, which is the property the whole normalisation exists for.
     """
     players = session.query(Player).options(selectinload(Player.gameweek_stats)).all()
     if not players:
         return {}
+
+    def gate(player: Player) -> float:
+        if availability is None:
+            return chance_of_playing(player)
+        return availability.get(player.id, chance_of_playing(player))
 
     slots_by_team = {
         shape.team_id: shape.slots for shape in compute_team_shapes(session, players=players)
@@ -316,14 +335,14 @@ def compute_minutes_profiles(session: Session, use_model: bool = True) -> dict[i
                 # rotation nudge is not applied on top — it would charge the
                 # same evidence twice.
                 blended.append(model_probabilities[player.id])
-                availability_gates.append(chance_of_playing(player))
+                availability_gates.append(gate(player))
             else:
                 estimate = credibility * observed + (1 - credibility) * prior
                 # Availability is applied *before* normalisation on purpose: an
                 # injured player's share of the position group's slots is then
                 # redistributed to his teammates by the scaling below, which is
                 # what actually happens when a first choice is ruled out.
-                blended.append(estimate * chance_of_playing(player) * rotation.get(player.id, 1.0))
+                blended.append(estimate * gate(player) * rotation.get(player.id, 1.0))
                 availability_gates.append(1.0)
 
         if model_probabilities:
@@ -338,13 +357,13 @@ def compute_minutes_profiles(session: Session, use_model: bool = True) -> dict[i
             matches = len(stats)
             starts = sum(1 for s in stats if did_start(s))
             appearances = sum(1 for s in stats if s.minutes > 0)
-            availability = chance_of_playing(player)
+            player_availability = gate(player)
 
             non_starts = max(0, matches - starts)
             bench_appearances = max(0, appearances - starts)
             bench_weight = non_starts / (non_starts + BENCH_CREDIBILITY_MATCHES)
             observed_bench = bench_appearances / non_starts if non_starts else 0.0
-            p_bench = availability * (
+            p_bench = player_availability * (
                 bench_weight * observed_bench + (1 - bench_weight) * BENCH_APPEARANCE_PRIOR
             )
 
@@ -357,7 +376,7 @@ def compute_minutes_profiles(session: Session, use_model: bool = True) -> dict[i
                 web_name=player.web_name,
                 team_id=player.team_id,
                 element_type=player.element_type,
-                availability=availability,
+                availability=player_availability,
                 matches_observed=matches,
                 start_credibility=(
                     matches / (matches + START_CREDIBILITY_MATCHES) if matches else 0.0

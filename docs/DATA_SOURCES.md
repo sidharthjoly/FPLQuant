@@ -2,7 +2,66 @@
 
 - **FPL API** (`fantasy.premierleague.com/api`) — prices, ownership %, points
   history, fixtures, birth dates, and FPL's own xG/xA/ICT/ep_next stats. No
-  API key required.
+  API key required. Also the source of **player news**: the `news` string is
+  FPL's own summary of a club's press conference, and `src/fplquant/news/`
+  parses it for the one thing `chance_of_playing_next_round` structurally
+  cannot carry — when a player is due back. The text is templated rather than
+  free-form (five shapes covered all 118 non-empty strings in the live pool on
+  2026-08-31), and the parser is strict: wording it does not recognise produces
+  no signal rather than a guess.
+
+- **Public football news feeds** (BBC Sport, The Guardian, Sky Sports) — RSS,
+  fetched daily by `fplquant-ingest-news` (`src/fplquant/news/feeds.py`),
+  configurable via `FPLQUANT_NEWS_FEED_URLS`. **RSS deliberately, not page
+  scraping**: a feed is published in order to be syndicated, so it is a contract
+  rather than markup that changes without notice; it carries a stable per-item
+  id and a timestamp, which is exactly the metadata needed and exactly what has
+  to be reverse-engineered out of HTML; and it does not attract the bot-blocking
+  that stops the Transfermarkt scrape running anywhere but a laptop. The client
+  identifies the project honestly rather than impersonating a browser, and
+  sleeps between requests.
+
+  The value is narrow and specific: 47 of the 118 non-empty FPL news strings
+  read "Unknown return date", and a press report of "out for six weeks" is the
+  only estimate of when those players are back that exists anywhere. That is the
+  *only* thing a feed is permitted to contribute.
+
+  Entity resolution is the real risk here, not access. An item arrives as free
+  text with no player id and has to be matched against a ~600-name pool full of
+  ambiguous surnames, while availability is a *hard gate* on expected points.
+  Four independent gates stand between an article and a projection
+  (`news/resolve.py`, `news/extract.py`, `news/sources.py`,
+  `news/availability.py`):
+
+  1. **The match must be strong.** A full name resolves on its own; a surname
+     needs the club named in the same text; a handful of names that collide with
+     ordinary English or with a stadium ("Rice", "Old Trafford") only ever
+     resolve in full. Matching is whole-word, so "Sarr" does not find "Sarri".
+  2. **The text must carry a date.** "Back in training" is stored and displayed
+     and consumed by nothing, because there is no date in it to build a recovery
+     from. Durations are read at their upper bound, so estimates err late.
+  3. **Confidence must clear `FPLQUANT_NEWS_MIN_MENTION_CONFIDENCE`** (0.8).
+     Below it a mention still exists in the database and the API — a human
+     reading a maybe-match is the right consumer for one — and cannot move a
+     number.
+  4. **FPL must already have ruled the player out without a date.** A report
+     cannot change a category, cannot touch a fit player, cannot override FPL's
+     own return date, and cannot contradict FPL about the next round.
+
+  On top of that, `availability` floors every projection at FPL's published
+  number, so even a wrong match at full confidence can only affect somebody
+  already at zero and can only move them upward. `FPLQUANT_NEWS_FEEDS_FEED_THE_MODEL=false`
+  keeps the ingest, the storage and the API while stopping consumption entirely.
+
+  Articles and mentions are stored rather than consumed in flight, so anything
+  this layer does to a projection is traceable to a URL, and a bad rule is a
+  `DELETE` and a re-run away. Nothing that serves a request touches the network.
+
+- **Predicted-lineup and injury-aggregator sites** — still not pursued. These
+  are HTML scraping rather than syndication, which is the fragility RSS avoids,
+  and the ones checked either sit behind bot challenges or disallow automated
+  crawlers by name in `robots.txt` (see the FBref and one-versus-one notes
+  above).
 - **Transfermarkt** (`transfermarkt.com`) — injury history (type, dates, days
   out, games missed). No official API — scraped via `TransfermarktClient`
   (`src/fplquant/data/transfermarkt_client.py`), identifying as a standard

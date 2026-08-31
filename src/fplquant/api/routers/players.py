@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from fplquant.api import schemas
 from fplquant.api.deps import get_session
+from fplquant.config import settings
+from fplquant.engine.horizon import DEFAULT_HORIZON
 from fplquant.form.fixtures import compute_fixture_adjusted_scores
 from fplquant.form.scoring import compute_form_scores
 from fplquant.lineup.starts import (
@@ -12,8 +14,12 @@ from fplquant.lineup.starts import (
     combined_start_probability,
     compute_start_probabilities,
 )
-from fplquant.models.orm import Player, PlayerGameweekStat
+from fplquant.models.orm import NewsMention, Player, PlayerGameweekStat
+from fplquant.news.availability import availability_timeline
+from fplquant.news.extract import RETURN_DATE
+from fplquant.news.mentions import recent_mentions
 from fplquant.risk.injury import compute_injury_risk_scores
+from fplquant.schedule import upcoming_events
 from fplquant.similarity.finder import find_cheaper_alternatives, find_similar_players
 from fplquant.similarity.vectors import build_player_vectors
 from fplquant.utils import normalize_text
@@ -93,6 +99,26 @@ def _to_start_odds(start: StartProbability, availability: float) -> schemas.Star
     )
 
 
+def _to_article(mention: NewsMention) -> schemas.NewsArticleOut:
+    article = mention.article
+    return schemas.NewsArticleOut(
+        title=article.title,
+        url=article.url,
+        source=article.source,
+        published_at=article.published_at,
+        confidence=mention.confidence,
+        match_basis=mention.match_basis,
+        signal=mention.signal,
+        return_date=mention.return_date,
+        evidence=mention.evidence,
+        feeds_the_model=(
+            mention.signal == RETURN_DATE
+            and mention.return_date is not None
+            and mention.confidence >= settings.news_min_mention_confidence
+        ),
+    )
+
+
 @router.get("", response_model=list[schemas.PlayerOut])
 def list_players(
     position: int | None = None,
@@ -148,6 +174,11 @@ def get_player(player_id: int, session: Session = Depends(get_session)) -> schem
     fixture = next((s for s in fixtures if s.player_id == player_id), None)
     availability = fixture.chance_of_playing if fixture else 1.0
 
+    # The same horizon the projections and the planner use, so the availability
+    # series shown here is the one the model actually acted on.
+    events = upcoming_events(session, DEFAULT_HORIZON)
+    news = availability_timeline(session, events).get(player_id) if events else None
+
     return schemas.PlayerDetailOut(
         **_to_player_out(player).model_dump(),
         form_score=schemas.FormScoreOut.model_validate(form) if form else None,
@@ -157,6 +188,8 @@ def get_player(player_id: int, session: Session = Depends(get_session)) -> schem
         fixture_difficulty=fixture.difficulty if fixture else None,
         chance_of_playing=availability,
         start_odds=_to_start_odds(start, availability) if start else None,
+        news=schemas.NewsOut.from_availability(news, events) if news else None,
+        articles=[_to_article(m) for m in recent_mentions(session, player_id)],
     )
 
 
