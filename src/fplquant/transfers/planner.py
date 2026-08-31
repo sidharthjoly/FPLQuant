@@ -191,20 +191,35 @@ def propose_transfers(
 
     transfers_made = len(pairs)
     hit_cost = TRANSFER_HIT_COST * max(0, transfers_made - free_transfers)
-    resulting_points = sum(c.predicted_points for c in resulting_players)
 
     # Measured on the starting XI, because that is what the manager scores.
     # Comparing 15-man totals overstates the gain by whatever the bench
     # improved by — on a real squad that was 17.6 points of a reported 29.
-    resulting_xi = select_starting_xi(resulting_players)
     current_xi = select_starting_xi(current_squad)
+    resulting_xi = select_starting_xi(resulting_players)
     gain_before = resulting_xi.starting_predicted_points - current_xi.starting_predicted_points
-    gain_after = gain_before - hit_cost
 
+    if gain_before - hit_cost <= 0 and transfers_made > 0:
+        # The solver values the bench at `BENCH_WEIGHT` — autosubs are real —
+        # so it will accept a plan whose gain is mostly a better bench. That is
+        # the right thing to optimise and the wrong thing to *recommend*: the
+        # headline number here is the starting XI's, and a plan that does not
+        # clear the hit on the number being reported must not come back saying
+        # it does. Falling back to the squad as it stands keeps the promise the
+        # docstring makes, rather than returning a move alongside a flag saying
+        # not to make it.
+        resulting_players = list(current_squad)
+        pairs = []
+        transfers_made = 0
+        hit_cost = 0
+        resulting_xi = current_xi
+        gain_before = 0.0
+
+    gain_after = gain_before - hit_cost
     resulting_squad = OptimizedSquad(
         players=resulting_players,
         total_cost=sum(c.now_cost for c in resulting_players),
-        total_predicted_points=resulting_points,
+        total_predicted_points=sum(c.predicted_points for c in resulting_players),
     )
 
     return TransferPlan(

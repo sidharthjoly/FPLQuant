@@ -1,3 +1,4 @@
+import argparse
 import logging
 import time
 import urllib.parse
@@ -23,6 +24,29 @@ def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, play
     full_name = f"{player.first_name} {player.second_name}"
     query = urllib.parse.quote(full_name)
     candidates = client.search_player(query)
+
+    if not candidates:
+        # An empty result set is not evidence about this player. Transfermarkt
+        # has no public API and does block — a datacentre IP can get an
+        # empty-looking page for every query while the same code from a
+        # residential connection resolves the whole pool. Caching that as
+        # "unmatched" is permanent: the caller only ever revisits players who
+        # are still "unresolved", so a single blocked run silently retires the
+        # entire squad from ever being looked up again.
+        #
+        # This is not hypothetical. Production reached 623 unmatched and 0
+        # matched — every player in the game — which is not a plausible thing
+        # for a database of footballers to be true of, and left the injury
+        # model running on age and minutes alone with nothing to indicate it.
+        logger.warning(
+            "Transfermarkt returned no candidates at all for %s (%s) — leaving unresolved "
+            "so a later run retries. Repeated across the pool, this means the search is "
+            "being blocked rather than the players being absent.",
+            full_name,
+            player.team.short_name,
+        )
+        return
+
     match = match_player(
         fpl_full_name=full_name,
         fpl_web_name=player.web_name,
@@ -30,6 +54,8 @@ def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, play
         candidates=candidates,
     )
     if match is None:
+        # Candidates came back and none was close enough. That *is* evidence
+        # about this player, so it is worth caching.
         player.transfermarkt_lookup_status = "unmatched"
         logger.info("No Transfermarkt match for %s (%s)", full_name, player.team.short_name)
         return
@@ -76,10 +102,26 @@ def sync_nationality(session: Session, client: TransfermarktClient, player: Play
     session.flush()
 
 
+def clear_unmatched_cache(session: Session) -> int:
+    """Put every `unmatched` player back to `unresolved`. Returns how many.
+
+    `unmatched` is a permanent verdict — nothing ever looks at those players
+    again — so a run that failed for reasons having nothing to do with the
+    players themselves needs a way to be taken back. Without this the only
+    remedy is hand-editing the database on the server.
+    """
+    players = session.query(Player).filter_by(transfermarkt_lookup_status="unmatched").all()
+    for player in players:
+        player.transfermarkt_lookup_status = "unresolved"
+    session.flush()
+    return len(players)
+
+
 def run_injury_ingest(
     client: TransfermarktClient | None = None,
     limit: int | None = None,
     delay_seconds: float | None = None,
+    retry_unmatched: bool = False,
 ) -> None:
     """Resolve Transfermarkt IDs for unresolved players, then sync injury history.
 
@@ -87,6 +129,9 @@ def run_injury_ingest(
     polite to Transfermarkt. Given the request volume for a full player pool,
     this is meant to run far less often than the main FPL ingest — see
     .github/workflows/ingest_injuries.yml (weekly, not daily).
+
+    `retry_unmatched` clears the cached "no match" verdicts first, for
+    recovering from a run that failed for reasons unrelated to the players.
     """
     owns_client = client is None
     client = client or TransfermarktClient()
@@ -94,6 +139,11 @@ def run_injury_ingest(
         delay_seconds if delay_seconds is not None else settings.transfermarkt_request_delay_seconds
     )
     try:
+        if retry_unmatched:
+            with session_scope() as session:
+                cleared = clear_unmatched_cache(session)
+                logger.info("Cleared %d cached 'unmatched' verdicts for retry", cleared)
+
         with session_scope() as session:
             players = session.query(Player).filter_by(transfermarkt_lookup_status="unresolved")
             if limit is not None:
@@ -131,8 +181,23 @@ def run_injury_ingest(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Resolve Transfermarkt matches and sync injury history."
+    )
+    parser.add_argument(
+        "--retry-unmatched",
+        action="store_true",
+        help=(
+            "Clear cached 'no match' verdicts before running. Use after a run that failed "
+            "for reasons unrelated to the players — a blocked search caches every player as "
+            "unmatched, and nothing revisits them without this."
+        ),
+    )
+    parser.add_argument("--limit", type=int, default=None, help="Only resolve this many players.")
+    args = parser.parse_args()
+
     logging.basicConfig(level=logging.INFO)
-    run_injury_ingest()
+    run_injury_ingest(limit=args.limit, retry_unmatched=args.retry_unmatched)
 
 
 if __name__ == "__main__":

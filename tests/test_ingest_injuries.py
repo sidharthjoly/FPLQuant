@@ -2,6 +2,7 @@ import datetime as dt
 
 from sqlalchemy.orm import Session
 
+from fplquant.data import ingest_injuries
 from fplquant.data.ingest_injuries import (
     resolve_transfermarkt_id,
     sync_injury_history,
@@ -165,3 +166,118 @@ def test_sync_nationality_noop_when_unresolved(db_session: Session) -> None:
 
     assert player.nationality is None
     assert client.nationality_calls == []
+
+
+def test_an_empty_search_leaves_the_player_unresolved(db_session: Session) -> None:
+    """The bug that emptied production's injury table for good.
+
+    An empty result set says nothing about the player — Transfermarkt has no
+    public API and does block, and a blocked search looks exactly like a player
+    who is not listed. Caching it as `unmatched` is permanent, because the
+    driver only ever revisits players who are still `unresolved`. One blocked
+    run therefore retired the entire pool from ever being looked up again:
+    production reached 623 unmatched and 0 matched, which is not a plausible
+    thing to be true of a database of professional footballers.
+    """
+    team = Team(fpl_id=1, name="Arsenal", short_name="ARS")
+    db_session.add(team)
+    db_session.flush()
+    player = Player(
+        fpl_id=1,
+        team_id=team.id,
+        first_name="Bukayo",
+        second_name="Saka",
+        web_name="Saka",
+        element_type=3,
+        now_cost=100,
+    )
+    db_session.add(player)
+    db_session.flush()
+
+    ingest_injuries.resolve_transfermarkt_id(db_session, _BlockedClient(), player)
+
+    assert player.transfermarkt_lookup_status == "unresolved"
+
+
+def test_a_real_miss_is_still_cached_as_unmatched(db_session: Session) -> None:
+    """Candidates came back and none was close enough. That *is* evidence about
+    the player, and re-asking every week would be pure waste."""
+    team = Team(fpl_id=2, name="Arsenal", short_name="ARS")
+    db_session.add(team)
+    db_session.flush()
+    player = Player(
+        fpl_id=2,
+        team_id=team.id,
+        first_name="Nobody",
+        second_name="Atall",
+        web_name="Atall",
+        element_type=3,
+        now_cost=40,
+    )
+    db_session.add(player)
+    db_session.flush()
+
+    ingest_injuries.resolve_transfermarkt_id(db_session, _WrongPlayerClient(), player)
+
+    assert player.transfermarkt_lookup_status == "unmatched"
+
+
+def test_clearing_the_cache_makes_unmatched_players_retryable(db_session: Session) -> None:
+    team = Team(fpl_id=3, name="Arsenal", short_name="ARS")
+    db_session.add(team)
+    db_session.flush()
+    for i in range(3):
+        db_session.add(
+            Player(
+                fpl_id=10 + i,
+                team_id=team.id,
+                first_name=f"P{i}",
+                second_name="X",
+                web_name=f"P{i}",
+                element_type=3,
+                now_cost=40,
+                transfermarkt_lookup_status="unmatched",
+            )
+        )
+    db_session.add(
+        Player(
+            fpl_id=20,
+            team_id=team.id,
+            first_name="Kept",
+            second_name="Match",
+            web_name="Kept",
+            element_type=3,
+            now_cost=40,
+            transfermarkt_lookup_status="matched",
+        )
+    )
+    db_session.flush()
+
+    cleared = ingest_injuries.clear_unmatched_cache(db_session)
+
+    assert cleared == 3
+    statuses = {p.web_name: p.transfermarkt_lookup_status for p in db_session.query(Player).all()}
+    assert all(statuses[f"P{i}"] == "unresolved" for i in range(3))
+    assert statuses["Kept"] == "matched"  # a real match is not thrown away
+
+
+class _BlockedClient:
+    """Transfermarkt returning nothing at all — what a blocked IP looks like."""
+
+    def search_player(self, query: str) -> list[TransfermarktSearchResult]:
+        return []
+
+
+class _WrongPlayerClient:
+    """A search that works and simply has nobody resembling the query."""
+
+    def search_player(self, query: str) -> list[TransfermarktSearchResult]:
+        return [
+            TransfermarktSearchResult(
+                transfermarkt_id=1,
+                slug="someone-else",
+                name="Zlatan Ibrahimovic",
+                club_name="AC Milan",
+                position="CF",
+            )
+        ]

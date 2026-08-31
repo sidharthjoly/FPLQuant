@@ -32,7 +32,10 @@ jobs:
           script: |
             set -e
             cd FPLQuant
-            docker compose exec -T api uv run fplquant-ingest-injuries
+            # --retry-unmatched clears cached "no match" verdicts first. A
+            # blocked search caches every player as unmatched, permanently,
+            # and nothing revisits them without this.
+            docker compose exec -T api uv run fplquant-ingest-injuries --retry-unmatched
             echo "--- resulting state ---"
             docker compose exec -T api uv run python -c "
             from fplquant.models.base import session_scope
@@ -44,5 +47,11 @@ jobs:
                 unresolved = s.query(Player).filter_by(transfermarkt_lookup_status='unresolved').count()
                 print(f'injury_records: {total}')
                 print(f'players matched/unmatched/unresolved: {matched}/{unmatched}/{unresolved}')
-                assert total > 0, 'injury_records is still empty - the scrape resolved nobody'
+                assert total > 0, (
+                    f'injury_records is still empty. matched={matched} unmatched={unmatched} '
+                    f'unresolved={unresolved}. A high unresolved count means Transfermarkt '
+                    f'returned nothing for this host - most likely the VM IP is blocked, in '
+                    f'which case the scrape has to run somewhere with a residential IP and '
+                    f'the resulting rows copied over.'
+                )
             "
