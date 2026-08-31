@@ -2,14 +2,30 @@
 
 For each past gameweek, the world is rebuilt as it stood before that deadline
 (`hydrate`), the real engine is asked for its projection, and the answer is
-compared against the points players went on to score — and against the
-baselines any model has to beat to be worth running:
+compared against the points players went on to score — and against the baseline
+any model has to beat to be worth running: **a rolling mean** of the player's
+last few gameweeks, which is roughly what the original `form`-based estimate
+amounted to. It is built only from rounds strictly before the one being
+predicted, so it is genuinely point-in-time.
 
-* **FPL's own `xP`**, published before the same deadline and shown free to
-  every manager. A model that cannot beat this is an elaborate way of being
-  worse.
-* **A rolling mean** of the player's last few gameweeks, which is roughly what
-  the original `form`-based estimate amounted to.
+The archive also carries an `xP` column, and it is **not** a fair baseline: it
+saw the results it is nominally forecasting. Three measurements say so, none of
+which a pre-deadline projection could survive.
+
+* Taking the eleven players it ranks highest, every gameweek, realises 71.8
+  points per gameweek across 131 gameweeks. A free, published projection that
+  good would win the game outright for anyone who copied it.
+* Holding the player and season fixed and looking only at rounds where they
+  played 60+ minutes, the same player's own `xP` runs **1.44 points higher in
+  the weeks they happened to score**, and 0.76 higher in the weeks they
+  assisted. 88% of players show the effect.
+* 40% of players who played 60+ minutes in both the preceding and following
+  round, but did not feature in this one, have an `xP` of exactly 0.00.
+
+So it is excluded from the comparison by default. `include_fpl_xp=True` scores
+it anyway, under a name that says what it is, because it remains the only
+external reference the archive carries and its *ordering* may still be worth
+inspecting — but nothing it produces belongs in a headline.
 
 The trained minutes model is deliberately switched off during a replay. It was
 fitted on these very seasons, so leaving it on would let it recognise the
@@ -44,6 +60,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_FIRST_ROUND = 6
 ROLLING_WINDOW = 3
 TOP_N = 11
+# Named so it cannot be mistaken for a fair baseline in a results table. See
+# the module docstring for the three measurements behind the label.
+FPL_XP_METHOD = "fpl_xp_leaky"
 
 
 @dataclass(frozen=True)
@@ -111,6 +130,7 @@ def replay_round(
     season: str,
     round_number: int,
     use_minutes_model: bool = False,
+    include_fpl_xp: bool = False,
 ) -> RoundResult | None:
     """Replay one gameweek and score every method against it.
 
@@ -118,6 +138,13 @@ def replay_round(
     trained on these seasons, so it recognises the gameweeks it is being tested
     against and the result is optimistic by an unknown amount. Useful for
     asking *which component* the error lives in, worthless as a headline.
+
+    `include_fpl_xp=True` adds the archive's contaminated `xP` column, and also
+    narrows the pool to the players it has an opinion about — so the engine and
+    rolling-mean figures it returns are not comparable with those from a normal
+    run. That coupling is why it is off by default: scoring every method only
+    where a leaky column happens to have a value let a broken baseline quietly
+    choose the population everything else was judged on.
     """
     actual_rows = [r for r in rows if r.round == round_number]
     if not actual_rows:
@@ -152,14 +179,16 @@ def replay_round(
     for element, points in actual_by_element.items():
         player_id = player_ids.get(element)
         projection = projections.get(player_id) if player_id else None
-        if projection is None or element not in fpl_xp_by_element:
-            # Scored only where every method has an opinion, so the comparison
-            # is like for like rather than each method judged on its own subset.
+        if projection is None:
+            continue
+        if include_fpl_xp and element not in fpl_xp_by_element:
+            # Only when `xP` is being scored does its coverage get to define the
+            # population — and then it must, so the comparison is like for like.
             continue
         recent = history.get(element, [])[-ROLLING_WINDOW:]
         elements.append(element)
         engine.append(projection.next_event_points)
-        fpl_xp.append(fpl_xp_by_element[element])
+        fpl_xp.append(fpl_xp_by_element.get(element, 0.0))
         rolling.append(statistics.fmean(recent) if recent else 0.0)
         actual.append(points)
 
@@ -167,18 +196,15 @@ def replay_round(
         return None
 
     actual_array = np.array(actual, dtype=np.float64)
-    return RoundResult(
-        season=season,
-        round=round_number,
-        players=len(elements),
-        scores={
-            "engine": _score("engine", np.array(engine, dtype=np.float64), actual_array),
-            "fpl_xp": _score("fpl_xp", np.array(fpl_xp, dtype=np.float64), actual_array),
-            "rolling_mean": _score(
-                "rolling_mean", np.array(rolling, dtype=np.float64), actual_array
-            ),
-        },
-    )
+    scores = {
+        "engine": _score("engine", np.array(engine, dtype=np.float64), actual_array),
+        "rolling_mean": _score("rolling_mean", np.array(rolling, dtype=np.float64), actual_array),
+    }
+    if include_fpl_xp:
+        scores[FPL_XP_METHOD] = _score(
+            FPL_XP_METHOD, np.array(fpl_xp, dtype=np.float64), actual_array
+        )
+    return RoundResult(season=season, round=round_number, players=len(elements), scores=scores)
 
 
 def run_backtest(
@@ -187,6 +213,7 @@ def run_backtest(
     first_round: int = DEFAULT_FIRST_ROUND,
     last_round: int = 38,
     use_minutes_model: bool = False,
+    include_fpl_xp: bool = False,
 ) -> BacktestResult:
     """Replay every gameweek in `seasons` and score the engine against baselines."""
     results: list[RoundResult] = []
@@ -199,8 +226,24 @@ def run_backtest(
         if not rows:
             logger.warning("No archived rows for %s; run fplquant-import-history", season)
             continue
+        if not any(row.team_h_score is not None for row in rows):
+            # Without scorelines `engine.rates.played_fixtures` counts nothing
+            # as played, every club sits on its prior, and the replay silently
+            # measures a model with its top layer switched off. Loud, because
+            # the numbers it produces otherwise look entirely plausible.
+            logger.warning(
+                "%s has no fixture scorelines — team ratings will not be fitted and the "
+                "result is meaningless. Re-run fplquant-import-history.",
+                season,
+            )
         for round_number in range(first_round, last_round + 1):
-            result = replay_round(rows, season, round_number, use_minutes_model=use_minutes_model)
+            result = replay_round(
+                rows,
+                season,
+                round_number,
+                use_minutes_model=use_minutes_model,
+                include_fpl_xp=include_fpl_xp,
+            )
             if result is not None:
                 results.append(result)
         logger.info("%s: replayed %d gameweeks", season, len(results))

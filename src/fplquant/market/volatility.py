@@ -41,7 +41,15 @@ def compute_volatility_scores(session: Session) -> list[VolatilityScore]:
     players = session.query(Player).options(selectinload(Player.gameweek_stats)).all()
     scores = []
     for player in players:
-        points = [s.total_points for s in sorted(player.gameweek_stats, key=lambda s: s.round)]
+        # Summed per round, not per row. A gameweek is the unit a manager
+        # actually scores in, and in a double it is two matches — so the
+        # fourteen points from a double belong in the series as one 14, not as
+        # two sevens, which would understate exactly the weeks with the most
+        # variance in them.
+        by_round: dict[int, int] = {}
+        for stat in player.gameweek_stats:
+            by_round[stat.round] = by_round.get(stat.round, 0) + stat.total_points
+        points = [by_round[r] for r in sorted(by_round)]
         score = compute_volatility(player.web_name, player.id, points)
         if score is not None:
             scores.append(score)

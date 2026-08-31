@@ -32,6 +32,39 @@ def _parse_birth_date(value: str | None) -> dt.date | None:
     return dt.date.fromisoformat(value)
 
 
+def _price_change_likelihood(raw: dict[str, Any]) -> int | None:
+    """How many price changes FPL projects for this player, signed.
+
+    `price_change_projections` is a list of one entry per day ahead, each with
+    a cumulative `likelihood`: +2 means two rises projected, -1 one fall. The
+    furthest-out entry is the one worth keeping, since it is the only one that
+    says anything a manager could not read off today's price.
+
+    New for 2026-27, and the reason it matters is that the mechanic changed
+    underneath the market layer: prices used to move at most once a day, so
+    inferring momentum from per-gameweek snapshots was the only option. They
+    now move continuously and FPL publishes its own forecast.
+    """
+    projections = raw.get("price_change_projections")
+    if not projections:
+        return None
+    furthest = max(projections, key=lambda entry: entry.get("offset", 0))
+    likelihood = furthest.get("likelihood")
+    return None if likelihood is None else int(likelihood)
+
+
+def _optional_int(value: Any) -> int | None:
+    """An absent field, versus one FPL reports as zero.
+
+    Defensive Contribution and its components did not exist before 2025-26, and
+    a zero would claim a player made no defensive actions where in fact nobody
+    was counting.
+    """
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 def upsert_teams(session: Session, teams_payload: list[dict[str, Any]]) -> dict[int, Team]:
     by_fpl_id = {t.fpl_id: t for t in session.query(Team).all()}
     for raw in teams_payload:
@@ -77,6 +110,10 @@ def upsert_players(
         player.chance_of_playing_next_round = raw["chance_of_playing_next_round"]
         player.news = raw.get("news", "") or ""
         player.birth_date = _parse_birth_date(raw.get("birth_date"))
+        player.defensive_contribution_per_90 = as_float(raw.get("defensive_contribution_per_90"))
+        player.price_change_percent = as_float(raw.get("price_change_percent"))
+        player.price_change_hourly_rate = as_float(raw.get("price_change_hourly_rate"))
+        player.price_change_likelihood = _price_change_likelihood(raw)
         player.updated_at = dt.datetime.now(dt.UTC)
     session.flush()
     return by_fpl_id
@@ -112,16 +149,25 @@ def upsert_fixtures(
 def upsert_player_gameweek_stats(
     session: Session, player: Player, history_payload: list[dict[str, Any]]
 ) -> None:
-    existing_by_round = {
-        s.round: s for s in session.query(PlayerGameweekStat).filter_by(player_id=player.id).all()
+    # Keyed on (round, fixture), not on the round alone. FPL returns one entry
+    # per match played, so in a double gameweek two entries share a round — and
+    # a round-only key does not merge them, it overwrites: the second match's
+    # row lands on top of the first and that match's minutes, goals and xG are
+    # gone with no error raised. Doubles carried between 2.6% and 11% of all
+    # player-minutes across the last four seasons.
+    existing_by_fixture = {
+        (s.round, s.fixture_fpl_id): s
+        for s in session.query(PlayerGameweekStat).filter_by(player_id=player.id).all()
     }
     for raw in history_payload:
-        stat = existing_by_round.get(raw["round"])
+        key = (raw["round"], raw["fixture"])
+        stat = existing_by_fixture.get(key)
         if stat is None:
-            stat = PlayerGameweekStat(player_id=player.id, round=raw["round"])
+            stat = PlayerGameweekStat(
+                player_id=player.id, round=raw["round"], fixture_fpl_id=raw["fixture"]
+            )
             session.add(stat)
-            existing_by_round[raw["round"]] = stat
-        stat.fixture_fpl_id = raw["fixture"]
+            existing_by_fixture[key] = stat
         stat.opponent_team_fpl_id = raw["opponent_team"]
         stat.was_home = raw["was_home"]
         stat.kickoff_time = _parse_kickoff(raw["kickoff_time"])
@@ -142,6 +188,15 @@ def upsert_player_gameweek_stats(
         stat.expected_assists = as_float(raw.get("expected_assists"))
         stat.expected_goal_involvements = as_float(raw.get("expected_goal_involvements"))
         stat.expected_goals_conceded = as_float(raw.get("expected_goals_conceded"))
+        # Left as None where FPL doesn't publish them, so a season played
+        # before the Defensive Contribution rule existed is distinguishable
+        # from a player who simply made no defensive actions.
+        stat.defensive_contribution = _optional_int(raw.get("defensive_contribution"))
+        stat.clearances_blocks_interceptions = _optional_int(
+            raw.get("clearances_blocks_interceptions")
+        )
+        stat.recoveries = _optional_int(raw.get("recoveries"))
+        stat.tackles = _optional_int(raw.get("tackles"))
         stat.value = raw["value"]
         stat.selected = raw["selected"]
         stat.transfers_in = raw["transfers_in"]
@@ -265,9 +320,49 @@ def run_ingest(client: FPLClient | None = None, sleep_between_requests: float = 
                 logger.info("Recorded %d point-in-time snapshots", written)
             except Exception:
                 logger.exception("Failed to record snapshots; ingest itself is unaffected")
+
+            warn_if_stale(session)
     finally:
         if owns_client:
             client.close()
+
+
+def warn_if_stale(session: Session) -> int | None:
+    """Warn when gameweek history lags the fixtures that have been played.
+
+    A silently stale database is the failure mode this pipeline has no other
+    defence against. Every projection it produces still looks entirely
+    reasonable — the engine has data, it is just last week's — so nothing
+    downstream can tell, and a cron that stopped firing looks exactly like a
+    quiet week. Returns the number of gameweeks behind, or None if it is
+    current.
+    """
+    latest_played = (
+        session.query(Fixture.event)
+        .filter(Fixture.finished.is_(True), Fixture.event.isnot(None))
+        .order_by(Fixture.event.desc())
+        .limit(1)
+        .scalar()
+    )
+    latest_ingested = (
+        session.query(PlayerGameweekStat.round)
+        .order_by(PlayerGameweekStat.round.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_played is None:
+        return None
+    behind = int(latest_played) - int(latest_ingested or 0)
+    if behind <= 0:
+        return None
+    logger.warning(
+        "Gameweek history is %d gameweek(s) behind: fixtures are finished through GW%s but "
+        "player stats stop at GW%s. Predictions will be built on stale data.",
+        behind,
+        latest_played,
+        latest_ingested if latest_ingested is not None else "none",
+    )
+    return behind
 
 
 def main() -> None:

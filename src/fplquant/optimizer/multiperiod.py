@@ -94,7 +94,19 @@ STARTING_XI_SIZE = 11
 WILDCARD = "wildcard"
 BENCH_BOOST = "bench_boost"
 TRIPLE_CAPTAIN = "triple_captain"
-AVAILABLE_CHIPS = frozenset({WILDCARD, BENCH_BOOST, TRIPLE_CAPTAIN})
+FREE_HIT = "free_hit"
+AVAILABLE_CHIPS = frozenset({WILDCARD, BENCH_BOOST, TRIPLE_CAPTAIN, FREE_HIT})
+
+# Chips whose transfers are free and which leave the free-transfer balance
+# untouched. The wildcard keeps its new squad; the free hit gives it back.
+_UNLIMITED_TRANSFER_CHIPS = (WILDCARD, FREE_HIT)
+
+# FPL issues two full sets of chips a season, one usable in gameweeks 1-19 and
+# one in 20-38, so a horizon that crosses the boundary may play each chip
+# twice. A chip named in `chips` is taken to be available in every half the
+# horizon touches; a manager who has already spent their first-half wildcard
+# should simply plan from a gameweek after which that is no longer true.
+CHIP_SECOND_HALF_FIRST_EVENT = 20
 
 
 @dataclass(frozen=True)
@@ -270,8 +282,11 @@ def plan_horizon(
                 # no-op that the flow constraint alone would permit.
                 problem += buy[player_id, event] + sell[player_id, event] <= 1
 
-        # Hits are the transfers beyond the free ones. A wildcard relaxes it.
-        relaxation = _MAX_TRANSFERS * chip_plays[WILDCARD][event] if WILDCARD in chips else 0
+        # Hits are the transfers beyond the free ones. A wildcard or free hit
+        # relaxes it: both make a whole squad's worth of transfers free.
+        relaxation = _MAX_TRANSFERS * pulp.lpSum(
+            chip_plays[chip][event] for chip in _UNLIMITED_TRANSFER_CHIPS if chip in chips
+        )
         available = free_transfers if index == 0 else free_balance[events[index - 1]]
         problem += hits[event] >= transfers - available - relaxation
 
@@ -282,6 +297,26 @@ def plan_horizon(
         # transfers that weren't taken as hits, or to zero under a wildcard.
         problem += used_free[event] >= transfers - hits[event] - relaxation
         problem += free_balance[event] <= available - used_free[event] + 1
+
+        # A free hit is a loan, not a wildcard: the squad it buys lasts one
+        # gameweek and then reverts to whatever was owned before. Without this
+        # the chip is a strictly better wildcard — free transfers *and* you
+        # keep the squad — and the solver plays it every time.
+        #
+        # Expressed as a two-sided inequality that only binds when the chip is
+        # played. Both sides are binaries, so their difference lies in [-1, 1]
+        # and a big-M of 1 is enough.
+        if FREE_HIT in chips and index + 1 < len(events):
+            before = (
+                {pid: (1 if pid in owned else 0) for pid in ids}
+                if index == 0
+                else {pid: squad[pid, events[index - 1]] for pid in ids}
+            )
+            after = events[index + 1]
+            for player_id in ids:
+                gap = squad[player_id, after] - before[player_id]
+                problem += gap <= 1 - chip_plays[FREE_HIT][event]
+                problem += -gap <= 1 - chip_plays[FREE_HIT][event]
 
     solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=solver_time_limit)
     problem.solve(solver)
@@ -412,22 +447,39 @@ def _add_chips(
     """Let the solver decide which gameweek each chip is played in.
 
     Every chip is a binary per gameweek, constrained to be played at most once
-    across the horizon. The bench boost and triple captain both multiply a
-    chip decision by a selection decision, which is not linear, so each gets an
-    auxiliary variable pinned below both factors — the standard linearisation
-    of a product of binaries, and it needs no upper-bound constraint here
-    because the objective is pushing the auxiliary up.
+    *per half-season* — FPL issues two sets, one for gameweeks 1-19 and one for
+    20-38, so a horizon spanning the boundary legitimately gets two of each.
+    The bench boost and triple captain both multiply a chip decision by a
+    selection decision, which is not linear, so each gets an auxiliary variable
+    pinned below both factors — the standard linearisation of a product of
+    binaries, and it needs no upper-bound constraint here because the objective
+    is pushing the auxiliary up.
     """
+    halves = [
+        [event for event in events if event < CHIP_SECOND_HALF_FIRST_EVENT],
+        [event for event in events if event >= CHIP_SECOND_HALF_FIRST_EVENT],
+    ]
     plays: dict[str, dict[int, pulp.LpVariable]] = {}
     for chip in AVAILABLE_CHIPS:
         plays[chip] = {
             event: pulp.LpVariable(f"chip_{chip}_{event}", cat="Binary") for event in events
         }
         if chip in chips:
-            problem += pulp.lpSum(plays[chip].values()) <= 1
+            for half in halves:
+                if half:
+                    problem += pulp.lpSum(plays[chip][event] for event in half) <= 1
         else:
             for variable in plays[chip].values():
                 problem += variable == 0
+
+    # The whole cost of a free hit falls in the *following* gameweek, when the
+    # squad reverts. The last week of the horizon has no following gameweek in
+    # the model, so a chip played there would look free — an unlimited transfer
+    # budget at no price, which the solver would take every single time. It is
+    # ruled out rather than mispriced: extend the horizon by a week to find out
+    # whether the final week is really where it belongs.
+    if events:
+        problem += plays[FREE_HIT][events[-1]] == 0
 
     for index, event in enumerate(events):
         # FPL allows one chip per gameweek. Without this the solver stacks

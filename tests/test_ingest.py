@@ -191,3 +191,81 @@ def test_team_strengths_are_archived_too(db_session: Session) -> None:
     snapshots = db_session.query(TeamSnapshot).all()
     assert len(snapshots) == db_session.query(Team).count()
     assert all(s.captured_on is not None for s in snapshots)
+
+
+DOUBLE_GAMEWEEK_PAYLOAD = [
+    {**PLAYER_HISTORY_PAYLOAD[0], "fixture": 1001, "minutes": 90, "total_points": 6},
+    {
+        **PLAYER_HISTORY_PAYLOAD[0],
+        "fixture": 1002,  # same round, second match
+        "opponent_team": 3,
+        "was_home": False,
+        "minutes": 75,
+        "total_points": 9,
+        "goals_scored": 1,
+    },
+]
+
+
+def test_a_double_gameweek_keeps_both_matches(db_session: Session) -> None:
+    """The bug this guards was silent and cost real data.
+
+    FPL returns one history entry per *match*, so a double gameweek is two
+    entries in the same round. The upsert keyed on the round alone, so the
+    second simply overwrote the first — no error, no log line, and the player's
+    first match of the week ceased to exist. Doubles carried between 2.6% and
+    11% of all player-minutes across the last four seasons, concentrated in the
+    rounds the planner most wants to get right.
+    """
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    players = ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+    player = players[101]
+
+    ingest.upsert_player_gameweek_stats(db_session, player, DOUBLE_GAMEWEEK_PAYLOAD)
+    ingest.upsert_player_gameweek_stats(db_session, player, DOUBLE_GAMEWEEK_PAYLOAD)  # idempotent
+
+    stats = db_session.query(PlayerGameweekStat).all()
+    assert len(stats) == 2
+    assert {s.fixture_fpl_id for s in stats} == {1001, 1002}
+    assert sum(s.minutes for s in stats) == 165
+    assert sum(s.total_points for s in stats) == 15
+
+
+def test_defensive_contribution_is_stored_and_absence_is_not_a_zero(
+    db_session: Session,
+) -> None:
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    players = ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+
+    history = [
+        {**PLAYER_HISTORY_PAYLOAD[0], "defensive_contribution": 11, "tackles": 4},
+        # An older round, from a season before FPL counted defensive actions.
+        {**PLAYER_HISTORY_PAYLOAD[0], "round": 2, "fixture": 1002},
+    ]
+    ingest.upsert_player_gameweek_stats(db_session, players[101], history)
+
+    by_round = {s.round: s for s in db_session.query(PlayerGameweekStat).all()}
+    assert by_round[1].defensive_contribution == 11
+    assert by_round[1].tackles == 4
+    # None, not 0: "nobody was counting" is not "made no defensive actions".
+    assert by_round[2].defensive_contribution is None
+
+
+def test_a_stale_database_says_so(db_session: Session) -> None:
+    """A pipeline that quietly stops updating produces predictions that look
+    entirely reasonable and are last week's. Nothing else in the stack notices."""
+    teams = ingest.upsert_teams(db_session, TEAMS_PAYLOAD)
+    players = ingest.upsert_players(db_session, ELEMENTS_PAYLOAD, teams)
+    ingest.upsert_fixtures(db_session, FIXTURES_PAYLOAD, teams)
+    for fixture in db_session.query(Fixture).all():
+        fixture.finished = True
+        fixture.event = 4
+    ingest.upsert_player_gameweek_stats(db_session, players[101], PLAYER_HISTORY_PAYLOAD)
+    db_session.flush()
+
+    assert ingest.warn_if_stale(db_session) == 3  # fixtures through GW4, stats to GW1
+
+    for fixture in db_session.query(Fixture).all():
+        fixture.event = 1
+    db_session.flush()
+    assert ingest.warn_if_stale(db_session) is None

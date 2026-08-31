@@ -66,7 +66,25 @@ _FLOAT_FIELDS = ("influence", "creativity", "threat", "ict_index")
 # Absent before 2022-23, and a genuine absence rather than a zero — stored as
 # NULL so a model can tell "no chances created" from "not measured that year".
 _OPTIONAL_FLOAT_FIELDS = ("expected_goals", "expected_assists", "expected_goals_conceded")
-# FPL publishes its own projection as `xP`; stored under a clearer name.
+# The fixture scoreline, repeated on every player row in that match. Cheap to
+# carry and not reconstructable from anything else here, and without it a
+# replayed season has no played fixtures at all: `engine.rates.played_fixtures`
+# requires a scoreline, so a backtest built on an archive missing these fits
+# nothing and returns every club's prior for every gameweek.
+# Absent before 2021-22 in some exports, hence optional.
+_OPTIONAL_INT_FIELDS = (
+    "team_h_score",
+    "team_a_score",
+    # Defensive Contribution and its components, published from 2025-26 —
+    # NULL for earlier seasons, where the rule did not exist and a zero would
+    # be a lie rather than a measurement.
+    "defensive_contribution",
+    "clearances_blocks_interceptions",
+    "recoveries",
+    "tackles",
+)
+# The archive's `xP` column. Stored, but not a pre-deadline projection — see
+# `HistoricalPlayerGameweek.expected_points` and `fplquant.backtest.replay`.
 _XP_COLUMN = "xP"
 
 
@@ -101,6 +119,17 @@ def _as_int(value: Any) -> int:
 def _optional_float(row: dict[str, str], field: str) -> float | None:
     value = row.get(field)
     return None if value in (None, "") else float(value)
+
+
+def _optional_int(row: dict[str, str], field: str) -> int | None:
+    """A column absent from this season's export, versus a measured zero.
+
+    The distinction carries real information here: Defensive Contribution did
+    not exist before 2025-26, so a zero in an older season would claim a player
+    made no defensive actions when in fact nobody was counting.
+    """
+    value = row.get(field)
+    return None if value in (None, "") else int(float(value))
 
 
 def _parse_kickoff(value: str | None) -> Any:
@@ -147,6 +176,8 @@ def parse_rows(season: str, csv_text: str) -> list[dict[str, Any]]:
             row[field] = as_float(raw.get(field))
         for field in _OPTIONAL_FLOAT_FIELDS:
             row[field] = _optional_float(raw, field)
+        for field in _OPTIONAL_INT_FIELDS:
+            row[field] = _optional_int(raw, field)
         row["expected_points"] = _optional_float(raw, _XP_COLUMN)
         rows.append(row)
     return rows

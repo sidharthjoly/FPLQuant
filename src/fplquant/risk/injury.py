@@ -133,7 +133,13 @@ def compute_injury_risk_scores(
     scores = []
     for player in players:
         age = compute_age(player.birth_date, as_of)
-        minutes_history = [s.minutes for s in sorted(player.gameweek_stats, key=lambda s: s.round)]
+        # Minutes per gameweek, summed over a double's two fixtures — the
+        # load component asks how hard a player has been worked lately, and a
+        # week in which he played twice is the answer, not two lighter weeks.
+        minutes_by_round: dict[int, int] = {}
+        for stat in player.gameweek_stats:
+            minutes_by_round[stat.round] = minutes_by_round.get(stat.round, 0) + stat.minutes
+        minutes_history = [minutes_by_round[r] for r in sorted(minutes_by_round)]
 
         age_c = _age_component(age)
         position_c = _position_component(player.element_type)

@@ -28,7 +28,13 @@ class TeamShape:
 
 
 def _starts_by_round(players: list[Player]) -> dict[int, dict[int, dict[int, int]]]:
-    """team_id -> round -> element_type -> how many players started there."""
+    """team_id -> fixture -> element_type -> how many players started there.
+
+    Keyed on the fixture rather than the round, because a formation is a
+    property of a match. Counting per round would add up both halves of a
+    double gameweek and read a side that twice named four defenders as having
+    lined up with eight.
+    """
     from fplquant.lineup.starts import did_start
 
     counts: dict[int, dict[int, dict[int, int]]] = defaultdict(lambda: defaultdict(dict))
@@ -36,7 +42,8 @@ def _starts_by_round(players: list[Player]) -> dict[int, dict[int, dict[int, int
         for stat in player.gameweek_stats:
             if not did_start(stat):
                 continue
-            by_position = counts[player.team_id][stat.round]
+            match = stat.fixture_fpl_id if stat.fixture_fpl_id is not None else stat.round
+            by_position = counts[player.team_id][match]
             by_position[player.element_type] = by_position.get(player.element_type, 0) + 1
     return counts
 

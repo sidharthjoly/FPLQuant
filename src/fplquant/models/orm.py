@@ -45,6 +45,21 @@ class Player(Base):
     birth_date: Mapped[dt.date | None] = mapped_column(nullable=True)
     updated_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
 
+    # Season-to-date defensive actions per 90, as FPL publishes them. The input
+    # to the Defensive Contribution term in `fplquant.engine.scoring`.
+    defensive_contribution_per_90: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # FPL's own price-change forecast, published from 2026-27 onward. Prices
+    # used to move at most once a day, which is why the market layer was built
+    # to infer momentum from per-gameweek snapshots; they now move continuously
+    # and the game publishes both the current rate and a signed multi-day
+    # projection. `price_change_percent` is progress toward the next change,
+    # `price_change_hourly_rate` its speed, and `price_change_likelihood` the
+    # number of changes projected over the next few days — negative for falls.
+    price_change_percent: Mapped[float] = mapped_column(Float, default=0.0)
+    price_change_hourly_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    price_change_likelihood: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Transfermarkt match cache: avoids re-searching every ingest run.
     # transfermarkt_lookup_status: "unresolved" (never tried), "matched", or "unmatched".
     transfermarkt_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -82,13 +97,29 @@ class Fixture(Base):
 
 
 class PlayerGameweekStat(Base):
-    """One row per (player, gameweek): points, price, ownership and underlying stats.
+    """One row per (player, fixture): points, price, ownership and underlying stats.
 
     This is the time series that form/momentum/volatility calculations are built on.
+
+    Keyed on the fixture, not the gameweek. FPL's per-player summary returns one
+    row per *match*, and in a double gameweek that is two rows in the same round
+    — so a key of (player, round) does not deduplicate them, it discards one.
+    Silently: the second row overwrites the first, no error, no log line. Double
+    gameweeks carried between 2.6% and 11% of all player-minutes in the last four
+    seasons, and they are concentrated in exactly the rounds the multi-period
+    planner exists to exploit.
+
+    The consequence for callers is that a round is not a row. Anything that means
+    "this player's points in gameweek 12" has to sum the rounds's rows rather than
+    take one — see `fplquant.market.volatility`, `.correlation` and `.momentum`,
+    which all do. Anything that means "one match of evidence" — start rates,
+    per-90 rates, rest days — wants the rows as they come.
     """
 
     __tablename__ = "player_gameweek_stats"
-    __table_args__ = (UniqueConstraint("player_id", "round", name="uq_player_round"),)
+    __table_args__ = (
+        UniqueConstraint("player_id", "round", "fixture_fpl_id", name="uq_player_round_fixture"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
@@ -118,6 +149,15 @@ class PlayerGameweekStat(Base):
     expected_assists: Mapped[float] = mapped_column(Float, default=0.0)
     expected_goal_involvements: Mapped[float] = mapped_column(Float, default=0.0)
     expected_goals_conceded: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Defensive Contribution and its components. Nullable because rows written
+    # before this column existed carry no value, and because a zero here would
+    # be indistinguishable from a genuine zero — see
+    # `fplquant.engine.scoring.defensive_contribution_points` for what they buy.
+    defensive_contribution: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clearances_blocks_interceptions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recoveries: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tackles: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # "stock market" fields: price and ownership as of this gameweek
     value: Mapped[int] = mapped_column(Integer, default=0)  # tenths of a million
@@ -306,8 +346,32 @@ class HistoricalPlayerGameweek(Base):
     selected: Mapped[int] = mapped_column(Integer, default=0)
     transfers_in: Mapped[int] = mapped_column(Integer, default=0)
     transfers_out: Mapped[int] = mapped_column(Integer, default=0)
-    # FPL's own expected-points projection for this fixture, published before
-    # the deadline. The baseline any points model has to beat to justify
-    # itself — it is free, it is what the game already shows every manager, and
-    # a model that cannot beat it is an elaborate way of being worse.
+
+    # The fixture's scoreline, repeated on every player row in that match. It
+    # is the only place a replay can get it: the archive publishes no fixture
+    # table, and `fplquant.engine.rates` will not count a match as played
+    # without one, so a backtest missing this fits nothing and silently returns
+    # every club's prior. Repeated per row rather than normalised out because
+    # the archive is loaded as one flat bulk insert and a second table would
+    # have to be derived from these rows anyway.
+    team_h_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    team_a_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Defensive Contribution, the scoring stat FPL added for 2025-26: two
+    # points at 10 clearances/blocks/interceptions/tackles for a defender, or
+    # 12 defensive actions including recoveries for anyone else. Absent —
+    # stored NULL, not zero — for seasons played before the rule existed, so a
+    # model can tell "made no defensive actions" from "nobody was counting".
+    defensive_contribution: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clearances_blocks_interceptions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recoveries: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tackles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # FPL's own expected-points projection, taken from the archive's `xP`
+    # column. Emphatically *not* a pre-deadline projection: holding the player
+    # and season fixed and looking only at 60+ minute rounds, this number runs
+    # 1.44 points higher in the weeks that player happened to score, for 88% of
+    # players. It saw the result. Kept because it is still the only external
+    # reference in the archive, but see `fplquant.backtest.replay` for why it
+    # is excluded from the headline comparison.
     expected_points: Mapped[float | None] = mapped_column(Float, nullable=True)

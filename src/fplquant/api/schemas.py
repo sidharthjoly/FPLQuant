@@ -110,6 +110,9 @@ class PriceMomentumOut(BaseModel):
     net_transfers: int
     ownership_change: int
     ownership_change_pct: float
+    # FPL's own price forecast, where the game publishes it (2026-27 onward).
+    progress_percent: float | None = None
+    projected_changes: int | None = None
 
 
 class VolatilityScoreOut(BaseModel):
@@ -275,6 +278,7 @@ class PointsBreakdownOut(BaseModel):
     saves: float
     bonus: float
     cards: float
+    defensive_contribution: float
     clean_sheet_probability: float
     total: float
 
@@ -352,9 +356,14 @@ class PlanRequest(BaseModel):
         default=None, description="Plan from a real FPL squad instead of building from scratch"
     )
     free_transfers: int = Field(default=1, ge=0, le=5)
-    chips: list[Literal["wildcard", "bench_boost", "triple_captain"]] = Field(
+    chips: list[Literal["wildcard", "bench_boost", "triple_captain", "free_hit"]] = Field(
         default_factory=list,
-        description="Chips the planner may schedule, each played at most once over the horizon",
+        description=(
+            "Chips the planner may schedule, each played at most once per half-season "
+            "(gameweeks 1-19 and 20-38, matching FPL's two chip sets). A free hit is never "
+            "scheduled in the final gameweek of the horizon, because its cost falls in the "
+            "week the squad reverts and that week would be outside the plan."
+        ),
     )
 
 

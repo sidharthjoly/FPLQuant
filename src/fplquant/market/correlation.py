@@ -18,9 +18,23 @@ class TeammateCorrelation:
     correlation: float
 
 
+def _points_by_round(player: Player) -> dict[int, int]:
+    """A player's points per gameweek, summed across a double's two fixtures.
+
+    Summed rather than indexed: a dict comprehension keyed on the round would
+    keep whichever of a double gameweek's two rows happened to iterate last and
+    silently drop the other, which is the same class of bug that used to lose
+    the row entirely at ingest.
+    """
+    totals: dict[int, int] = {}
+    for stat in player.gameweek_stats:
+        totals[stat.round] = totals.get(stat.round, 0) + stat.total_points
+    return totals
+
+
 def _aligned_points(player_a: Player, player_b: Player) -> tuple[list[int], list[int]]:
-    points_a = {s.round: s.total_points for s in player_a.gameweek_stats}
-    points_b = {s.round: s.total_points for s in player_b.gameweek_stats}
+    points_a = _points_by_round(player_a)
+    points_b = _points_by_round(player_b)
     common_rounds = sorted(set(points_a) & set(points_b))
     return [points_a[r] for r in common_rounds], [points_b[r] for r in common_rounds]
 

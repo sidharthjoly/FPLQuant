@@ -21,10 +21,13 @@ fit, it is an underdetermined one.
 So the multipliers start at a prior taken from FPL's own published team
 strength ratings — which encode a whole previous season and the bookmakers'
 view of summer transfer business — and the match record moves them by a
-credibility weight that grows with the number of matches observed. With no
-matches played this reduces exactly to FPL's ratings; by midseason the
-published ratings are barely visible through the fitted correction. That is the
-same treatment `fplquant.form.scoring` gives player form, applied a level up.
+credibility weight that grows with the evidence observed. With no matches
+played this reduces exactly to FPL's ratings; the record carries about half the
+estimate by gameweek 10, and around two thirds from midseason on. It never
+reaches 1.0, and should not: the weights decay, so a season of matches is worth
+roughly seventeen equally-weighted ones, not thirty-eight (see
+`_effective_sample_size`). That is the same treatment `fplquant.form.scoring`
+gives player form, applied a level up.
 """
 
 import math
@@ -58,16 +61,20 @@ TEAM_FORM_HALFLIFE = 6.0
 # average, and anything outside that is small-sample noise rather than signal.
 _MIN_MULTIPLIER = 0.45
 _MAX_MULTIPLIER = 2.2
+_MULTIPLIER_RANGE = (_MIN_MULTIPLIER, _MAX_MULTIPLIER)
 # Final guard on the fixture rate itself. No Premier League side has a true
 # expectation below a quarter of a goal or above four.
 _MIN_LAMBDA = 0.25
 _MAX_LAMBDA = 4.0
 
-# Passes of the multiplicative fixed-point fit. Each pass re-estimates every
-# team's multipliers against the others' current values; because the update is
-# damped by the credibility weight it converges quickly, and 30 passes is
-# comfortably past the point where the numbers stop moving.
+# Passes of the multiplicative fit. Each pass rescales every team's multipliers
+# against the others' current values, in the manner of iterative proportional
+# fitting, and 30 passes is comfortably past the point where the numbers settle.
 _FIT_PASSES = 30
+# How much of each pass's correction to apply. Under-relaxation: the full step
+# overshoots, because a club's attack and its opponents' defences are being
+# corrected from the same state in the same pass and each is chasing the other.
+_FIT_DAMPING = 0.5
 
 # Weight on expected goals versus actual goals when measuring what a team did.
 # xG is the better estimator of a team's underlying rate — it aggregates every
@@ -78,6 +85,37 @@ _FIT_PASSES = 30
 XG_WEIGHT = 0.7
 
 
+def _effective_sample_size(weights: list[float]) -> float:
+    """How many equally-weighted matches this set of decayed weights is worth.
+
+    Kish's effective sample size, `(sum w)^2 / sum w^2`, and the reason it is
+    here rather than a plain `sum(w)` is a bug that made the priors permanent.
+
+    The recency weights decay geometrically, so their sum converges: with a
+    six-match halflife it approaches 9.17 and never exceeds it, however many
+    matches a club plays. Driving the credibility weight off that sum therefore
+    capped it at `9.17 / (9.17 + 8) = 0.534` — meaning that even in May, after
+    thirty-eight matches, the fitted correction was still being square-rooted
+    and half of every rating was the preseason prior. The docstring above
+    claimed the published ratings were "barely visible" by midseason; they were
+    carrying half the estimate.
+
+    The sum of weights is the wrong quantity because it answers "how much
+    weight is there", not "how much independent evidence is behind the weighted
+    mean" — which is what a credibility weight is asking. Kish's ratio answers
+    the second: it equals `n` for equal weights, and degrades as the weights
+    concentrate on fewer observations. Under this decay it converges to 17.3
+    rather than 9.17, so a club's own record reaches 0.63 by midseason and 0.68
+    by the end of the season, and the shape of the curve still respects that a
+    heavily decayed history genuinely is worth less than its match count.
+    """
+    total = sum(weights)
+    total_squared = sum(weight * weight for weight in weights)
+    if total_squared <= 0:
+        return 0.0
+    return total * total / total_squared
+
+
 @dataclass(frozen=True)
 class TeamRating:
     """A team's fitted attacking and defensive multipliers, both centred on 1.0."""
@@ -85,7 +123,7 @@ class TeamRating:
     team_id: int
     short_name: str
     matches_played: int
-    effective_matches: float  # time-decayed match count driving the credibility weight
+    effective_matches: float  # Kish effective sample size driving the credibility weight
     credibility: float  # 0.0 (pure prior) to 1.0 (pure fitted)
     attack_home: float
     attack_away: float
@@ -349,13 +387,17 @@ def compute_team_ratings(
     weights = _recency_weights(fixtures, halflife)
 
     played_count: dict[int, int] = dict.fromkeys((t.id for t in teams), 0)
-    effective: dict[int, float] = dict.fromkeys((t.id for t in teams), 0.0)
+    match_weights: dict[int, list[float]] = {t.id: [] for t in teams}
     for fixture, weight in zip(fixtures, weights, strict=True):
         for team_id in (fixture.team_h_id, fixture.team_a_id):
             if team_id in played_count:
                 played_count[team_id] += 1
-                effective[team_id] += weight
+                match_weights[team_id].append(weight)
 
+    effective = {
+        team_id: _effective_sample_size(team_weights)
+        for team_id, team_weights in match_weights.items()
+    }
     credibility = {
         team_id: n / (n + credibility_matches) if n > 0 else 0.0 for team_id, n in effective.items()
     }
@@ -397,19 +439,46 @@ def compute_team_ratings(
             conceded[away_id][0] += weight * home_obs
             conceded[away_id][1] += weight * lambda_home
 
+        # Centred across the league before being applied, so the pass can only
+        # move clubs relative to each other and never the overall goal level.
+        attack_corrections = _centred({team.id: _correction(scored[team.id]) for team in teams})
+        leak_corrections = _centred({team.id: _correction(conceded[team.id]) for team in teams})
+
+        # Applied to the running estimate, not to the prior. Rescaling the
+        # *prior* by a correction measured against the *current* estimate is
+        # not a fixed-point iteration at all — it is a two-cycle. Traced on a
+        # league of two clubs, one of which won 3-0 every week, it alternated
+        # between attack multipliers of 1.66 and 1.11 forever, so which answer
+        # came out depended on nothing but whether the pass count was odd or
+        # even. At 30 passes it was even, and the better side came out rated
+        # *below* the worse one.
         for team in teams:
-            w = credibility[team.id]
-            attack_correction = _correction(scored[team.id], w)
-            leak_correction = _correction(conceded[team.id], w)
-            prior = priors[team.id]
             attack[team.id] = (
-                _clamp(prior[0] * attack_correction, _MIN_MULTIPLIER, _MAX_MULTIPLIER),
-                _clamp(prior[1] * attack_correction, _MIN_MULTIPLIER, _MAX_MULTIPLIER),
+                _clamp(attack[team.id][0] * attack_corrections[team.id], *_MULTIPLIER_RANGE),
+                _clamp(attack[team.id][1] * attack_corrections[team.id], *_MULTIPLIER_RANGE),
             )
             leak[team.id] = (
-                _clamp(prior[2] * leak_correction, _MIN_MULTIPLIER, _MAX_MULTIPLIER),
-                _clamp(prior[3] * leak_correction, _MIN_MULTIPLIER, _MAX_MULTIPLIER),
+                _clamp(leak[team.id][0] * leak_corrections[team.id], *_MULTIPLIER_RANGE),
+                _clamp(leak[team.id][1] * leak_corrections[team.id], *_MULTIPLIER_RANGE),
             )
+
+    # Credibility is applied once, here, to the converged fit — which is what
+    # the docstring has always claimed it does. Folding it into the iteration as
+    # a per-pass exponent conflated two different jobs: damping the fit so it
+    # converges, and deciding how far to trust the result once it has. The
+    # geometric blend is the right one for multipliers, and it reduces exactly
+    # to the prior at weight 0 and to the fit at weight 1.
+    for team in teams:
+        prior = priors[team.id]
+        weight = credibility[team.id]
+        attack[team.id] = (
+            _shrink(prior[0], attack[team.id][0], weight),
+            _shrink(prior[1], attack[team.id][1], weight),
+        )
+        leak[team.id] = (
+            _shrink(prior[2], leak[team.id][0], weight),
+            _shrink(prior[3], leak[team.id][1], weight),
+        )
 
     return {
         team.id: TeamRating(
@@ -440,17 +509,61 @@ def _blend_goals(goals: float, expected_goals: float | None) -> float:
     return XG_WEIGHT * expected_goals + (1 - XG_WEIGHT) * goals
 
 
-def _correction(totals: list[float], credibility: float) -> float:
-    """(observed / expected) ** credibility, guarded and clamped.
+def _correction(totals: list[float]) -> float:
+    """(observed / expected), under-relaxed and clamped.
 
-    The exponent is the damping: a team with no record gets 1.0 exactly, so
-    their prior survives the pass untouched.
+    One step of iterative proportional fitting: a club that scored more than
+    the model expected has its attacking multiplier scaled up by the ratio.
+    The exponent is pure damping — a club's attack and its opponents' defences
+    are corrected from the same state in the same pass, so each is chasing a
+    number the other is about to move, and the full step overshoots.
     """
     observed, expected = totals
-    if credibility <= 0 or expected <= 0:
+    if expected <= 0:
         return 1.0
     ratio = max(observed, 1e-6) / expected
-    return _clamp(math.pow(ratio, credibility), _MIN_MULTIPLIER, _MAX_MULTIPLIER)
+    return _clamp(math.pow(ratio, _FIT_DAMPING), *_MULTIPLIER_RANGE)
+
+
+def _shrink(prior: float, fitted: float, credibility: float) -> float:
+    """Geometric blend of a prior multiplier and a fitted one.
+
+    Geometric rather than arithmetic because these multiply: halfway between
+    2x and 0.5x is 1x, not 1.25x.
+    """
+    blended = math.pow(prior, 1 - credibility) * math.pow(fitted, credibility)
+    return _clamp(blended, *_MULTIPLIER_RANGE)
+
+
+def _centred(corrections: dict[int, float]) -> dict[int, float]:
+    """Corrections rescaled to a geometric mean of 1.0.
+
+    Without this the fit does not converge, and the reason is that the model is
+    not identified. `lambda = base * attack[i] * leak[j]` is unchanged if every
+    attack multiplier is doubled and every leak halved, so there is a direction
+    in parameter space the data cannot see — and the iteration walks along it.
+
+    Worse, it walks along it with gain. Attack and leak are corrected in the
+    same pass from the same state, so a pass where expected goals came in too
+    low raises *both*, and the next pass overshoots by the product of the two
+    corrections rather than by either. The map's gain in that direction is
+    roughly twice the credibility weight, which is stable only while
+    credibility stays under 0.5 — so the divergence sat dormant behind a
+    credibility weight that could never exceed 0.53, and surfaced the moment
+    that ceiling was lifted. Traced from a real run, the league mean
+    oscillated 1.03, 0.99, 1.04, 0.97, 1.05 … and reached the clamps by pass 30.
+
+    Centring each pass pins the scale where it belongs — in `BASE_GOALS_*`,
+    which is a measured league constant — and leaves the multipliers to
+    describe only what they are meant to: how a club differs from average.
+    """
+    if not corrections:
+        return corrections
+    log_mean = statistics.fmean(math.log(value) for value in corrections.values())
+    scale = math.exp(log_mean)
+    if scale <= 0:
+        return corrections
+    return {team_id: value / scale for team_id, value in corrections.items()}
 
 
 def rates_for_fixture(

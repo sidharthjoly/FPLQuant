@@ -38,6 +38,8 @@ from fplquant.engine.scoring import (
     CLEAN_SHEET_POINTS,
     CLEAN_SHEET_POSITIONS,
     CONCEDED_PENALTY_POSITIONS,
+    DEFENSIVE_CONTRIBUTION_POINTS,
+    DEFENSIVE_CONTRIBUTION_THRESHOLD,
     GOAL_POINTS,
     GOALS_CONCEDED_PER_PENALTY,
     SAVES_PER_GOAL_CONCEDED,
@@ -244,6 +246,18 @@ def _score_side(
             started[:, index] * _START_MINUTES_FRACTION + cameo[:, index] * _CAMEO_MINUTES_FRACTION
         )
         points += CARD_POINTS_PER_90[position] * minutes
+
+        # Defensive Contribution: a threshold on a count, so it is drawn as one
+        # — Poisson over the minutes that simulation actually played, matching
+        # the closed form's P(actions >= threshold). Sampling it rather than
+        # adding its expectation is the point of having two implementations:
+        # the analytic term evaluates the tail exactly, the sampler reaches it
+        # by counting, and if they disagree one of them is wrong.
+        threshold = DEFENSIVE_CONTRIBUTION_THRESHOLD.get(position)
+        rate = projection.usage.defensive_actions_per_90
+        if threshold is not None and rate > 0:
+            actions = rng.poisson(rate * np.maximum(minutes, 0.0))
+            points += DEFENSIVE_CONTRIBUTION_POINTS * (actions >= threshold)
 
         results[projection.player_id] = points
     return results

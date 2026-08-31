@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from fplquant.engine.minutes import compute_minutes_profiles
 from fplquant.engine.scoring import PlayerFixtureInputs
-from fplquant.models.orm import Player
+from fplquant.models.orm import Player, PlayerGameweekStat
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER
 
 # Minutes of evidence before a player's own per-90 rate is trusted as much as
@@ -71,6 +71,26 @@ _MAX_PRICE_INDEX = 3.0
 # efforts, penalties, rebounds and own goals, which pay nobody an assist.
 ASSISTED_GOAL_FRACTION = 0.74
 
+# League-typical defensive actions per 90 by position, measured over every
+# 2025-26 appearance in the archive — the first season FPL counted them. These
+# are the prior a player's own rate is shrunk toward. Unlike the goal and assist
+# priors there is no price term: Defensive Contribution rewards the ball-winning
+# midfielders and centre-backs the price ladder rates *lowest*, so scaling this
+# by cost would get the sign wrong.
+POSITION_DEFENSIVE_ACTIONS_PER_90: dict[int, float] = {
+    GOALKEEPER: 0.0,  # not eligible for the threshold at all
+    DEFENDER: 7.55,
+    MIDFIELDER: 8.41,
+    FORWARD: 4.75,
+}
+# Minutes before a player's own defensive rate outweighs the positional prior.
+# Two full matches — shorter than the 540 used for goals and assists, because
+# defensive actions accumulate at eight or so a game where goals arrive at a
+# fraction of one, so a couple of matches is already a usable rate. Calibrated
+# on a real holdout: fitted on the first half of 2025-26, this predicts 26.9% of
+# defenders reaching the threshold in the second half against 26.1% observed.
+DEFENSIVE_CREDIBILITY_MINUTES = 180.0
+
 # Bonus points are dominated by goal involvements — the BPS formula rewards
 # them heavily — so a player with no bonus history is credited a share of the
 # bonus their expected involvements imply, plus a small base for the defensive
@@ -98,6 +118,7 @@ class PlayerUsage:
     goal_share: float  # of their club's goals in a match, 0.0-1.0
     assist_share: float
     bonus_per_appearance: float
+    defensive_actions_per_90: float
 
 
 def _price_index(player: Player, position_mean_cost: dict[int, float]) -> float:
@@ -106,6 +127,28 @@ def _price_index(player: Player, position_mean_cost: dict[int, float]) -> float:
         return 1.0
     index = float((player.now_cost / mean_cost) ** PRICE_ELASTICITY)
     return max(_MIN_PRICE_INDEX, min(_MAX_PRICE_INDEX, index))
+
+
+def _defensive_rate(element_type: int, stats: list[PlayerGameweekStat]) -> float:
+    """Defensive actions per 90, shrunk from the positional prior toward the
+    player's own record.
+
+    Only rows where FPL actually counted defensive actions contribute. Before
+    2025-26 the column is NULL rather than zero, and treating a season nobody
+    measured as a season of no defensive work would drag every long-serving
+    player's rate toward zero — which is exactly the class of player the rule
+    was written to reward.
+    """
+    prior = POSITION_DEFENSIVE_ACTIONS_PER_90.get(element_type, 0.0)
+    if prior <= 0:
+        return 0.0
+    measured = [s for s in stats if s.defensive_contribution is not None]
+    minutes = sum(s.minutes for s in measured)
+    if minutes <= 0:
+        return prior
+    observed = 90 * sum(s.defensive_contribution or 0 for s in measured) / minutes
+    credibility = minutes / (minutes + DEFENSIVE_CREDIBILITY_MINUTES)
+    return credibility * observed + (1 - credibility) * prior
 
 
 def compute_player_usage(
@@ -162,6 +205,8 @@ def compute_player_usage(
         prior_bonus = BONUS_BASE + BONUS_PER_INVOLVEMENT * (goals_per_90 + assists_per_90)
         bonus = bonus_weight * observed_bonus + (1 - bonus_weight) * prior_bonus
 
+        defensive_actions_per_90 = _defensive_rate(player.element_type, stats)
+
         minutes_share = expected_minutes / 90
         goal_weight = minutes_share * goals_per_90
         assist_weight = minutes_share * assists_per_90
@@ -188,6 +233,7 @@ def compute_player_usage(
             goal_share=goal_weight,  # replaced below, once the team total is known
             assist_share=assist_weight,
             bonus_per_appearance=bonus,
+            defensive_actions_per_90=defensive_actions_per_90,
         )
 
     usage = {}
@@ -222,4 +268,5 @@ def fixture_inputs(
         expected_assists=lambda_for * ASSISTED_GOAL_FRACTION * usage.assist_share,
         lambda_conceded=lambda_against,
         expected_bonus=usage.bonus_per_appearance,
+        defensive_actions_per_90=usage.defensive_actions_per_90,
     )

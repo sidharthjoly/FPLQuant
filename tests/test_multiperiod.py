@@ -3,6 +3,7 @@ import pytest
 from fplquant.optimizer.multiperiod import (
     AVAILABLE_CHIPS,
     BENCH_BOOST,
+    FREE_HIT,
     MAX_FREE_TRANSFERS,
     TRIPLE_CAPTAIN,
     WILDCARD,
@@ -147,7 +148,7 @@ def test_the_triple_captain_lands_on_the_best_week_for_it() -> None:
     assert played == [2]
 
 
-def test_each_chip_is_played_at_most_once() -> None:
+def test_each_chip_is_played_at_most_once_within_a_half_season() -> None:
     events = [1, 2, 3, 4]
     candidates = _pool(events)
 
@@ -160,6 +161,68 @@ def test_each_chip_is_played_at_most_once() -> None:
 
     for chip in (BENCH_BOOST, TRIPLE_CAPTAIN):
         assert sum(1 for gameweek in plan.gameweeks if gameweek.chip == chip) <= 1
+
+
+def test_a_horizon_crossing_the_halfway_point_gets_both_chip_sets() -> None:
+    """FPL issues two full sets of chips, one for gameweeks 1-19 and one for
+    20-38. A plan spanning the boundary that allows only one is leaving a chip
+    on the table."""
+    events = [18, 19, 20, 21]
+    spike = {18: 1.0, 19: 40.0, 20: 40.0, 21: 1.0}
+    hauls = dict.fromkeys(list(INCUMBENTS)[:3], spike)
+    candidates = _pool(events, points=hauls)
+
+    plan = plan_horizon(candidates, events, budget=1000, chips=frozenset({TRIPLE_CAPTAIN}))
+
+    played = [gameweek.event for gameweek in plan.gameweeks if gameweek.chip == TRIPLE_CAPTAIN]
+    assert len(played) == 2, "one chip per half-season, and this horizon spans both"
+    assert min(played) < 20 <= max(played)
+
+
+def test_a_free_hit_reverts_the_squad_the_following_week() -> None:
+    """Without the reversion constraint a free hit is a strictly better
+    wildcard — unlimited transfers *and* you keep the squad — so the solver
+    plays it every time and the plan it returns is not one you could play."""
+    events = [1, 2, 3]
+    # A one-week spike: worth buying into for GW2 alone, not worth keeping.
+    spike = {player_id: {1: 1.0, 2: 30.0, 3: 1.0} for player_id in CHALLENGERS}
+    candidates = _pool(events, points=spike)
+
+    plan = plan_horizon(
+        candidates,
+        events,
+        budget=1000,
+        current_squad_ids=INCUMBENTS,
+        free_transfers=1,
+        chips=frozenset({FREE_HIT}),
+    )
+
+    by_event = {gameweek.event: gameweek for gameweek in plan.gameweeks}
+    free_hit_weeks = [e for e, gw in by_event.items() if gw.chip == FREE_HIT]
+    assert free_hit_weeks == [2]
+    assert by_event[2].hit_cost == 0
+    # The squad in GW3 is the one owned in GW1, not the one the chip bought.
+    reverted = {p.player_id for p in by_event[3].squad.players}
+    before = {p.player_id for p in by_event[1].squad.players}
+    assert reverted == before
+
+
+def test_a_free_hit_is_never_scheduled_in_the_final_gameweek() -> None:
+    """Its whole cost falls in the week the squad reverts, and that week is
+    outside the horizon — so the solver would see free transfers at no price."""
+    events = [1, 2]
+    spike = {player_id: {1: 1.0, 2: 30.0} for player_id in CHALLENGERS}
+    candidates = _pool(events, points=spike)
+
+    plan = plan_horizon(
+        candidates,
+        events,
+        budget=1000,
+        current_squad_ids=INCUMBENTS,
+        chips=frozenset({FREE_HIT}),
+    )
+
+    assert all(gameweek.chip != FREE_HIT for gameweek in plan.gameweeks)
 
 
 def test_a_wildcard_waives_the_hits_for_its_week() -> None:

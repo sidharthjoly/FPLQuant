@@ -173,7 +173,8 @@ def _explain(projections: list[HorizonProjection], name: str) -> None:
                 f"      appearance {b.appearance:+.2f}  goals {b.goals:+.2f}  "
                 f"assists {b.assists:+.2f}  clean sheet {b.clean_sheet:+.2f}  "
                 f"conceded {b.goals_conceded:+.2f}  saves {b.saves:+.2f}  "
-                f"bonus {b.bonus:+.2f}  cards {b.cards:+.2f}"
+                f"bonus {b.bonus:+.2f}  cards {b.cards:+.2f}  "
+                f"def contrib {b.defensive_contribution:+.2f}"
             )
     print(f"  total {projection.total_points:.2f}, discounted {projection.discounted_points:.2f}")
 

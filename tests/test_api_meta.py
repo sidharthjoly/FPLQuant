@@ -1,3 +1,4 @@
+import datetime as dt
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -24,15 +25,28 @@ class StubFPLClient:
         self.close()
 
 
+def _deadline(days_from_now: float) -> str:
+    """A deadline relative to now, in FPL's wire format.
+
+    Relative rather than a fixed date, because the endpoint's whole job is to
+    compare against the clock. Hardcoded dates made this test pass until the
+    real world caught up with them and the "upcoming" gameweek quietly became a
+    past one — the assertion then failed with the code behaving correctly.
+    """
+    moment = dt.datetime.now(dt.UTC) + dt.timedelta(days=days_from_now)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def test_next_deadline_picks_the_earliest_unfinished_event(
     api_client: TestClient, monkeypatch: Any
 ) -> None:
+    passed, soon, later = _deadline(-7), _deadline(3), _deadline(10)
     stub = StubFPLClient(
         bootstrap={
             "events": [
-                {"id": 1, "finished": True, "deadline_time": "2026-08-14T17:30:00Z"},
-                {"id": 3, "finished": False, "deadline_time": "2026-09-04T17:30:00Z"},
-                {"id": 2, "finished": False, "deadline_time": "2026-08-28T17:30:00Z"},
+                {"id": 1, "finished": True, "deadline_time": passed},
+                {"id": 3, "finished": False, "deadline_time": later},
+                {"id": 2, "finished": False, "deadline_time": soon},
             ]
         }
     )
@@ -43,14 +57,14 @@ def test_next_deadline_picks_the_earliest_unfinished_event(
     assert response.status_code == 200
     body = response.json()
     assert body["gameweek"] == 2
-    assert body["deadline"] == "2026-08-28T17:30:00Z"
+    assert body["deadline"] == soon
 
 
 def test_next_deadline_returns_null_when_season_is_over(
     api_client: TestClient, monkeypatch: Any
 ) -> None:
     stub = StubFPLClient(
-        bootstrap={"events": [{"id": 1, "finished": True, "deadline_time": "2026-08-14T17:30:00Z"}]}
+        bootstrap={"events": [{"id": 1, "finished": True, "deadline_time": _deadline(-7)}]}
     )
     monkeypatch.setattr(meta_router, "FPLClient", lambda: stub)
 

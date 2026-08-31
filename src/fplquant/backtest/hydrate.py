@@ -137,7 +137,16 @@ def _add_fixtures(
     name_to_id: dict[str, int],
     up_to_round: int,
 ) -> None:
-    """One fixture per (fixture id) seen, marked played if it is behind us."""
+    """One fixture per (fixture id) seen, marked played if it is behind us.
+
+    A played fixture has to carry its scoreline, not just the `finished` flag.
+    `fplquant.engine.rates.played_fixtures` gates on both, so a fixture list
+    with the flag and no scores is an *empty* match record as far as the goal
+    model is concerned — every club's credibility stays at zero, the fitted
+    correction collapses to 1.0, and the replay silently measures nothing but
+    the prior. That is not a hypothetical: it is what this function did until
+    the archive started carrying `team_h_score`.
+    """
     seen: dict[int, HistoricalPlayerGameweek] = {}
     for row in rows:
         if row.round > up_to_round or row.was_home is None:
@@ -151,6 +160,7 @@ def _add_fixtures(
         away = teams.get(away_name or "")
         if home is None or away is None:
             continue
+        played = row.round < up_to_round
         session.add(
             Fixture(
                 fpl_id=fixture_id,
@@ -158,7 +168,12 @@ def _add_fixtures(
                 team_h_id=home.id,
                 team_a_id=away.id,
                 kickoff_time=row.kickoff_time or dt.datetime(2000, 1, 1, tzinfo=dt.UTC),
-                finished=row.round < up_to_round,
+                finished=played,
+                # Only for matches behind the deadline: the scoreline of the
+                # round being predicted is exactly the future this replay
+                # exists to keep out.
+                team_h_score=row.team_h_score if played else None,
+                team_a_score=row.team_a_score if played else None,
                 team_h_difficulty=3,
                 team_a_difficulty=3,
             )
@@ -173,49 +188,41 @@ def _add_history(
 ) -> None:
     """Gameweek stats for rounds strictly before the one being predicted.
 
-    A double gameweek gives one player two archive rows in a round, but
-    `PlayerGameweekStat` is unique on (player, round) — the same limitation the
-    live schema has. The rows are summed rather than one being dropped, so a
-    player's minutes and goals for that round are still right.
+    One row per player-fixture, which is both what the archive holds and what
+    the live schema now stores — so a double gameweek arrives here as two rows
+    and stays two rows. Attribution matters as much as the totals: the team xG
+    that `fplquant.engine.rates` fits against is keyed on the fixture, so
+    collapsing a double into one row would hand both matches' xG to one of
+    them and none to the other.
     """
-    merged: dict[tuple[int, int], PlayerGameweekStat] = {}
     for row in rows:
         if row.round >= up_to_round or row.element not in players:
             continue
-        key = (row.element, row.round)
-        stat = merged.get(key)
-        if stat is None:
-            stat = PlayerGameweekStat(
+        session.add(
+            PlayerGameweekStat(
                 player_id=players[row.element].id,
                 round=row.round,
                 fixture_fpl_id=row.fixture,
+                opponent_team_fpl_id=row.opponent_team,
                 was_home=row.was_home,
                 kickoff_time=row.kickoff_time,
                 value=row.value,
                 selected=row.selected,
-                # Explicit zeros: column defaults are applied by the database
-                # on insert, so these are still None in Python until a flush,
-                # and this accumulates into them before one happens.
-                minutes=0,
-                starts=0,
-                total_points=0,
-                goals_scored=0,
-                assists=0,
-                bonus=0,
-                bps=0,
-                ict_index=0.0,
-                expected_goals=0.0,
-                expected_assists=0.0,
+                minutes=row.minutes,
+                starts=row.starts,
+                total_points=row.total_points,
+                goals_scored=row.goals_scored,
+                assists=row.assists,
+                clean_sheets=row.clean_sheets,
+                goals_conceded=row.goals_conceded,
+                bonus=row.bonus,
+                bps=row.bps,
+                ict_index=row.ict_index,
+                expected_goals=row.expected_goals or 0.0,
+                expected_assists=row.expected_assists or 0.0,
+                defensive_contribution=row.defensive_contribution,
+                clearances_blocks_interceptions=row.clearances_blocks_interceptions,
+                recoveries=row.recoveries,
+                tackles=row.tackles,
             )
-            merged[key] = stat
-            session.add(stat)
-        stat.minutes += row.minutes
-        stat.starts = (stat.starts or 0) + (row.starts or 0)
-        stat.total_points += row.total_points
-        stat.goals_scored += row.goals_scored
-        stat.assists += row.assists
-        stat.bonus += row.bonus
-        stat.bps += row.bps
-        stat.ict_index += row.ict_index
-        stat.expected_goals += row.expected_goals or 0.0
-        stat.expected_assists += row.expected_assists or 0.0
+        )

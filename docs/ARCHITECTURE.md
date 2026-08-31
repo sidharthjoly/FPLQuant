@@ -178,9 +178,14 @@ at five; `used_free` is a variable rather than `transfers - hits` because a
 wildcard consumes no free transfers, and an expression would charge fifteen
 against a balance floored at one and make the week infeasible.
 
-Chips are binaries constrained to at most one play across the horizon. Bench
-boost and triple captain each multiply a chip decision by a selection decision,
-linearised with an auxiliary variable pinned below both factors.
+Chips are binaries constrained to at most one play per half-season, matching
+FPL's two chip sets (gameweeks 1-19 and 20-38). Bench boost and triple captain
+each multiply a chip decision by a selection decision, linearised with an
+auxiliary variable pinned below both factors. The free hit additionally
+constrains next week's squad back to last week's — two inequalities that bind
+only when the chip is played — since without the reversion it dominates the
+wildcard and is always chosen; and it is barred from the final gameweek, whose
+reversion would fall outside the horizon.
 
 The candidate pool is trimmed to the top of each position by projected points,
 plus every owned player unconditionally — several binaries per player per

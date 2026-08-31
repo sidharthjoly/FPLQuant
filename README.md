@@ -22,15 +22,18 @@ Cloud VM.
 ## Features
 
 - **Data pipeline** — FPL API ingestion into SQLite via SQLAlchemy, schema
-  managed by Alembic.
+  managed by Alembic. One row per player-fixture, so a double gameweek keeps
+  both matches.
 - **Form analysis** — EWMA of points and underlying stats (xG, xA, ICT).
 - **Injury risk** — age, position, minutes load, and Transfermarkt injury
   history combined into a per-player risk score.
 - **Market layer** — price and ownership momentum, points volatility, and
-  teammate correlation, computed from per-gameweek time series.
+  teammate correlation, computed from per-gameweek time series, plus FPL's own
+  published price-change forecast where the game provides one.
 - **Points engine** — fitted team goal rates, allocated top-down to players,
-  scored through FPL's actual scoring table. Produces a per-rule breakdown and
-  a full distribution rather than a single number.
+  scored through FPL's actual scoring table, Defensive Contribution included.
+  Produces a per-rule breakdown and a full distribution rather than a single
+  number.
 - **Multi-gameweek horizon** — projections fixture by fixture over the next N
   rounds, including double and blank gameweeks.
 - **Squad optimizer** — ILP selection (PuLP) under budget, position, and
@@ -38,7 +41,8 @@ Cloud VM.
   objective.
 - **Multi-period planner** — one integer program over the whole horizon:
   squad, starting XI, captain, transfers, free-transfer banking, hits, and
-  chip timing, all as decision variables.
+  chip timing, all as decision variables. All four chips, one of each per
+  half-season, with the free hit's squad reverting the week after.
 - **Monte Carlo** — gameweeks simulated match by match, so teammates correlate
   structurally. Gives floors, ceilings, haul odds, and squad-level risk.
 - **Fixture-adjusted predictions** — opponent strength, venue, and playing
@@ -111,6 +115,14 @@ probabilities start at a softmax over price and give way to who actually gets
 picked. None of it switches over at a threshold — with an empty database the
 whole engine still produces a usable projection, built entirely from priors.
 
+Defensive actions are the one rate with no price term in its prior, and
+deliberately: Defensive Contribution rewards the ball-winning midfielders and
+centre-backs that the price ladder rates *lowest*, so scaling that prior by cost
+would get the sign backwards. It shrinks toward a flat positional average
+instead, and reaches even weight after two full matches — defensive actions
+arrive at eight or so a game where goals arrive at a fraction of one, so a
+couple of matches is already a usable rate.
+
 ## Commands
 
 | Command | Description |
@@ -128,7 +140,7 @@ whole engine still produces a usable projection, built entirely from priors.
 | `fplquant-plan` | Plan squad, transfers, captaincy, and chips over a horizon |
 | `fplquant-import-history` | Import past FPL seasons from the public archive, for training |
 | `fplquant-train-minutes` | Train and evaluate the learned start-probability model |
-| `fplquant-backtest` | Replay past gameweeks and score the engine against FPL's own xP |
+| `fplquant-backtest` | Replay past gameweeks and score the engine against a point-in-time baseline |
 | `fplquant-api` | Run the FastAPI backend and dashboard |
 
 Injury ingestion is deliberately separate from the main ingest: it scrapes
@@ -220,6 +232,21 @@ that into points through FPL's rules — clean sheet probability as `exp(-λ)`
 gated on 60 minutes, the goals-conceded penalty as `E[floor(K/2)]` rather than
 `floor(E[K]/2)`, saves from the opponent's rate, bonus from BPS history.
 
+**Defensive Contribution** — the two points FPL added in 2025-26 for reaching a
+threshold of defensive actions — is modelled as a threshold rather than a rate,
+because that is what it is. Scoring the rule at a player's *average* would give
+a defender averaging 9.5 actions nothing and one averaging 10.5 the full two
+points, when both cross the line about half the time; instead the actions are
+taken as Poisson over the minutes played and the model asks for
+`P(actions >= threshold)`. It is worth about 0.44 points an appearance to a
+defender — a sixth of what defenders score — and it separates the ball-winning
+centre-backs and holding midfielders that nothing else in the model can tell
+apart. The thresholds were not looked up but measured out of the archive: take
+defenders with no goals, assists, bonus or cards and subtract the points
+already accounted for, and the residual is exactly 0 below 10 actions and
+exactly 2 at or above it, with no exceptions in 170 observations. The same test
+puts midfielders at 12.
+
 `fplquant-project --explain` prints the whole chain for one player:
 
 ```
@@ -289,38 +316,66 @@ before each deadline, the **real engine** is asked for its projection — not a
 reimplementation that happens to agree — and the answer is scored against what
 players went on to do, alongside the baselines it has to beat.
 
-The headline result, over **131 gameweeks across four seasons**, is that the
-engine comes last:
+The result, over **131 gameweeks across four seasons**:
 
 | GW6-38, 2022-23 to 2025-26 | MAE | rank corr | top-11 realised |
 | --- | --- | --- | --- |
-| FPL's own xP | **0.976** | 0.577 | **75.4** |
-| rolling 3-GW mean | 1.076 | **0.673** | 47.3 |
-| this engine | 1.163 | 0.542 | 53.6 |
+| rolling 3-GW mean | **1.076** | **0.673** | 47.3 |
+| this engine | 1.164 | 0.541 | **54.5** |
 
-It loses to `xP` — the projection the game already shows every manager for
-free — and it loses to a three-gameweek rolling average, which is about the
-crudest thing you could write.
+It loses to a three-gameweek rolling average on both error and ranking, which is
+about the crudest thing you could write. It wins on `top-11 realised` — what the
+eleven players a metric ranks highest actually went on to score — by seven
+points a week, which is the metric a squad is actually picked on.
 
-The two metrics disagree in a way worth reading. Rank correlation across the
-whole pool is dominated by separating "will play" from "won't", and a rolling
-mean of recent points does that well. `top-11 realised` — what the eleven
-players a metric ranks highest actually went on to score — is the
-decision-relevant one, and there FPL's xP wins clearly.
+The two disagree for a readable reason. Rank correlation across the whole pool
+is dominated by separating "will play" from "won't", and a rolling mean of
+recent points does that well by construction: a player who scored nothing three
+weeks running is usually a player who is not playing. The engine spends its
+effort on how many points someone will score *given* they play, which is the
+harder question and the one that decides between two players you would actually
+consider.
 
-Two hypotheses for the gap turned out not to explain it. Enabling the
-learned minutes model narrows it (0.535 → 0.595) but does not close it, and
-that comparison is optimistic anyway because the model was trained on these
-seasons. And restricting the comparison to players who actually appeared —
-removing the advantage FPL's xP gets from knowing team news the archive does
-not carry — leaves the gap intact (0.311 against 0.573).
+**Two corrections to an earlier version of this table**, both of which mattered
+more than the numbers did.
 
-So the honest position is that the structural model is elegant, internally
-consistent, well tested, and worse than both a free number and a naive average.
-That is a real finding rather than a caveat, and it is the argument for the next
-piece of work: stop competing with `ep_next` and start *using* it — as a
-feature, or by learning the residual on top of it. The machinery to check
-whether that helps now exists, which is the point of having built this.
+It used to carry a third row, FPL's own `xP` from the archive, reported as the
+winner on MAE and top-11. That column is not a pre-deadline projection: it saw
+the results it was nominally forecasting. Holding the player and season fixed
+and looking only at rounds where they played 60+ minutes, the same player's own
+`xP` runs **1.44 points higher in the weeks they happened to score** and 0.76
+higher in the weeks they assisted, for 88% of players; 40% of players who
+started the week before and the week after but missed a gameweek entirely have
+an `xP` of exactly 0.00. The eleven players it ranked highest realised 71.8
+points a gameweek — a free published projection that good would win the game
+outright for anyone who copied it, which is the tell that should have caught it
+without any statistics at all. It is still available behind `--with-fpl-xp`,
+under a name that says what it is, and it is not a baseline.
+
+And the engine in the old table had its top layer switched off. `hydrate` marked
+past fixtures finished but never gave them a scoreline, and
+`engine.rates.played_fixtures` requires both — so no match counted as played,
+every club's credibility stayed at zero, and all 131 gameweeks were scored
+against a model whose team ratings were 100% preseason prior. Fitted attack
+multipliers equalled their priors for 20 clubs out of 20. The expected-goals
+range across every fixture was 0.97 to 1.97, when real 2024-25 team scoring ran
+from Southampton's 0.66 a game to Liverpool's 2.24: the model believed every
+match in England was a 1.4-goal affair for both sides.
+
+Fixing it moved the ratings a long way — the fitted range is now 0.61 to 3.14,
+Liverpool have the best attack in 2024-25 and the three relegated sides the
+worst three of both attack and defence — and moved the headline barely at all
+(rank correlation 0.542 → 0.541). That is worth stating plainly rather than
+burying: the structural model, now actually running, is still beaten by a naive
+average on ranking. Team-strength flattening was never going to explain a gap
+that lives in "will they play", and it didn't.
+
+So the honest position is unchanged in substance and better founded: the model
+is internally consistent, well tested, correct about the components it models,
+and does not beat a three-week average at ordering the whole player pool. The
+next piece of work is the same one — use `ep_next` as a feature or learn the
+residual on top of it — with the difference that the backtest measuring it is
+now measuring the thing being shipped.
 
 The replay disables the trained minutes model by default, because it was fitted
 on the same seasons and would otherwise recognise the gameweeks it is being
@@ -328,7 +383,7 @@ tested against. `--with-minutes-model` re-enables it as a diagnostic and says so
 
 Two limits worth stating: the archive carries no team strength ratings and no
 injury news, so the replay cannot measure the availability gate, and both apply
-equally to the baselines.
+equally to the baseline.
 
 ### Multi-period planning
 
@@ -374,6 +429,20 @@ One chip per gameweek is a constraint, not an assumption. Without it the solver
 stacks them: a wildcard makes a whole squad's transfers free, a bench boost then
 scores the bench it just bought, and all three pile into the week with the best
 fixtures, producing a plan worth more points than any you are allowed to play.
+
+FPL issues two full sets of chips a season — one usable in gameweeks 1-19, one
+in 20-38 — so the limit is one of each *per half*, and a horizon crossing the
+boundary can legitimately play the same chip twice.
+
+The free hit needs one constraint of its own, because it is a loan rather than a
+purchase: the squad it buys lasts a week and then reverts. Without that written
+down it is a strictly better wildcard — unlimited transfers *and* you keep the
+squad — and the solver plays it every time. The reversion is the whole cost, and
+it falls in the *following* gameweek, which is why the planner will never
+schedule one in the last week of a horizon: that week's cost would sit outside
+the model, and free transfers at no price is a plan you cannot execute. Extend
+the horizon by a week to find out whether the final week is really where it
+belongs.
 
 Known approximations, all deliberate: prices are held constant across the
 horizon, so it cannot plan around price rises; selling fees are not modelled;
