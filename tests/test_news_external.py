@@ -361,3 +361,61 @@ def test_both_endpoints_report_a_reported_return_date_the_same_way(
     assert detail["return_date_is_reported"] is True
     assert listed["return_date_is_reported"] is True
     assert detail["return_date"] == listed["return_date"]
+
+
+def test_tightening_the_resolver_can_be_applied_to_articles_already_stored(
+    db_session: Session,
+) -> None:
+    """The revocation the articles are stored for. When the matching rules are
+    tightened, the fix has to reach rows already written — the feeds will not
+    carry those stories again, so there is no other way to correct them."""
+    from fplquant.news.ingest_news import reresolve_mentions
+
+    make_league(db_session, teams=2)
+    player = db_session.query(Player).first()
+    assert player is not None
+    article = _seed_article(db_session, player)
+    # A match the current rules would never make, as an older run might have.
+    db_session.add(
+        NewsMention(
+            article_id=article.id,
+            player_id=player.id + 1,
+            confidence=0.7,
+            matched_alias="stale",
+            match_basis="bare_surname",
+            signal="return_date",
+            return_date=dt.date(2026, 9, 10),
+            evidence="",
+        )
+    )
+    db_session.flush()
+    assert db_session.query(NewsMention).count() == 2
+
+    removed, created = reresolve_mentions(db_session, as_of=AS_OF)
+
+    assert removed == 2
+    assert created == 0, "the seeded article names nobody the current rules accept"
+    assert db_session.query(NewsMention).filter_by(match_basis="bare_surname").count() == 0
+
+
+def test_a_duration_is_counted_from_when_the_article_was_written(
+    db_session: Session,
+) -> None:
+    """ "Out for six weeks" written on the 28th means back six weeks after the
+    28th. Reading it on the 31st does not move the return."""
+    make_league(db_session, teams=2)
+    player = db_session.query(Player).first()
+    assert player is not None
+    player.first_name, player.second_name = "Bukayo", "Saka"
+    player.web_name = "Saka"
+    db_session.flush()
+
+    published = AS_OF - dt.timedelta(days=3)
+    ingest_news(
+        db_session,
+        client=_StubFeed([_item("d1", "Bukayo Saka out for six weeks", published)]),
+        as_of=AS_OF,
+    )
+
+    mention = db_session.query(NewsMention).one()
+    assert mention.return_date == published.date() + dt.timedelta(weeks=6)

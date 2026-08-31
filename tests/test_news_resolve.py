@@ -131,3 +131,84 @@ def test_the_best_evidence_for_a_player_is_the_one_reported(db_session: Session)
     (match,) = PlayerIndex(db_session).resolve("Arsenal's Bukayo Saka: Saka speaks")
 
     assert match.confidence == FULL_NAME_CONFIDENCE
+
+
+def test_a_name_inside_a_longer_name_does_not_match_separately(
+    db_session: Session,
+) -> None:
+    """Measured on live feeds: "Barcelona close to deal for Arsenal's Gabriel
+    Jesus" resolved to Gabriel Jesus *and* to Gabriel Magalhães, whose name is
+    sitting in the middle of it. The longer name claims those words."""
+    arsenal = make_team(db_session, fpl_id=1, short_name="ARS")
+    arsenal.name = "Arsenal"
+    magalhaes = _player(db_session, arsenal, 1, "Gabriel", "dos Santos Magalhães", "Gabriel")
+    jesus = _player(db_session, arsenal, 2, "Gabriel", "Fernando de Jesus", "G.Jesus")
+    db_session.flush()
+
+    matches = PlayerIndex(db_session).resolve("Barcelona close to deal for Arsenal's Gabriel Jesus")
+
+    assert [m.player_id for m in matches] == [jesus.id]
+    assert magalhaes.id not in {m.player_id for m in matches}
+
+
+def test_a_surname_inside_a_full_name_does_not_match_a_different_player(
+    db_session: Session,
+) -> None:
+    palace = make_team(db_session, fpl_id=1, short_name="CRY")
+    palace.name = "Crystal Palace"
+    spurs = make_team(db_session, fpl_id=2, short_name="TOT")
+    spurs.name = "Spurs"
+    ismaila = _player(db_session, palace, 1, "Ismaila", "Sarr", "Sarr")
+    _player(db_session, spurs, 2, "Pape Matar", "Sarr", "P.M.Sarr")
+    db_session.flush()
+
+    matches = PlayerIndex(db_session).resolve("Spurs and Palace watch Ismaila Sarr")
+
+    assert [m.player_id for m in matches] == [ismaila.id]
+
+
+def test_a_first_name_never_identifies_a_player_on_its_own(db_session: Session) -> None:
+    """Every false positive left after span-claiming was a given name: a byline
+    ("Jonathan Wilson"), a player outside the pool ("Bradley Barcola"), a first
+    name in a list ("Anthony Gordon"). The pool knows its own given names."""
+    brentford = make_team(db_session, fpl_id=1, short_name="BRE")
+    brentford.name = "Brentford"
+    sunderland = make_team(db_session, fpl_id=2, short_name="SUN")
+    sunderland.name = "Sunderland"
+    # A player whose *surname* is Wilson, and another whose *first* name is.
+    _player(db_session, brentford, 1, "Callum", "Wilson", "Wilson")
+    _player(db_session, sunderland, 2, "Wilson", "Isidor", "Isidor")
+    db_session.flush()
+    index = PlayerIndex(db_session)
+
+    assert index.resolve("Brentford are haunted by last summer | Jonathan Wilson") == []
+    # The full name still resolves, so the player is not lost.
+    assert [m.matched_alias for m in index.resolve("Callum Wilson scores")] == ["callum wilson"]
+
+
+def test_the_club_is_recognised_by_the_name_the_press_uses(db_session: Session) -> None:
+    """FPL stores "Man Utd". Feeds write "Manchester United". Without the
+    expansion the club check silently corroborates nothing, and a real match on
+    a bare surname is lost — this exact article was being missed."""
+    united = make_team(db_session, fpl_id=1, short_name="MUN")
+    united.name = "Man Utd"
+    rashford = _player(db_session, united, 1, "Marcus", "Rashford", "Rashford")
+    db_session.flush()
+
+    (match,) = PlayerIndex(db_session).resolve(
+        "Match report: Manchester United 5-2 Ipswich. Rashford return feels convenient."
+    )
+
+    assert match.player_id == rashford.id
+    assert match.basis == "alias_and_club"
+
+
+def test_a_club_name_is_not_read_as_a_player(db_session: Session) -> None:
+    """ "Aston Villa" is the commonest multi-word phrase in football writing that
+    contains a plausible surname."""
+    villa_club = make_team(db_session, fpl_id=1, short_name="AVL")
+    villa_club.name = "Aston Villa"
+    _player(db_session, villa_club, 1, "Fernando", "Villa", "Villa")
+    db_session.flush()
+
+    assert PlayerIndex(db_session).resolve("Aston Villa sign a striker") == []

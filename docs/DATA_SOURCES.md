@@ -33,10 +33,16 @@
   (`news/resolve.py`, `news/extract.py`, `news/sources.py`,
   `news/availability.py`):
 
-  1. **The match must be strong.** A full name resolves on its own; a surname
-     needs the club named in the same text; a handful of names that collide with
-     ordinary English or with a stadium ("Rice", "Old Trafford") only ever
-     resolve in full. Matching is whole-word, so "Sarr" does not find "Sarri".
+  1. **The match must be strong.** Longest match wins and claims its words, so
+     a shorter name inside a longer one ("Gabriel" inside "Gabriel Jesus") never
+     matches separately, and known non-player phrases — stadiums, competitions,
+     club names — claim words the same way. A token that is somebody's first
+     name never identifies a player alone, a rule derived from the pool itself
+     rather than curated. A surname needs its club, with club names expanded so
+     "Manchester United" corroborates a player FPL files under "Man Utd".
+     Matching is over whole tokens, so "Sarr" does not find "Sarri". A short
+     curated list covers surnames that are everyday English words ("Rice"),
+     which is the one collision the data cannot detect on its own.
   2. **The text must carry a date.** "Back in training" is stored and displayed
      and consumed by nothing, because there is no date in it to build a recovery
      from. Durations are read at their upper bound, so estimates err late.
@@ -54,8 +60,11 @@
   keeps the ingest, the storage and the API while stopping consumption entirely.
 
   Articles and mentions are stored rather than consumed in flight, so anything
-  this layer does to a projection is traceable to a URL, and a bad rule is a
-  `DELETE` and a re-run away. Nothing that serves a request touches the network.
+  this layer does to a projection is traceable to a URL. That is also what makes
+  a rules change retroactive: `fplquant-ingest-news --reresolve` rebuilds every
+  stored article's matches under the current rules, which is the only way to
+  correct rows already written — the feeds will not carry those stories again.
+  Nothing that serves a request touches the network.
 
 - **Predicted-lineup and injury-aggregator sites** — still not pursued. These
   are HTML scraping rather than syndication, which is the fragility RSS avoids,

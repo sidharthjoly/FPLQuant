@@ -365,11 +365,25 @@ availability is a hard gate: a wrong match doesn't add noise, it attaches one
 player's fitness bulletin to another player's projection. So four independent
 gates stand between an article and a number, and all four have to open:
 
-1. **The match is strong.** A full name resolves alone; a surname needs the club
-   named in the same text; names that collide with ordinary English or with a
-   stadium only ever resolve in full. Matching is whole-word — "Sarr" does not
-   find "Sarri". These rules were not precautions: run over a day of live feeds
-   without them, a bare-surname tier matched "Old Trafford" to Leeds' goalkeeper.
+1. **The match is strong.** Three rules, each derived from watching the resolver
+   fail on real feeds rather than from imagining how it might:
+
+   - *Longest match wins, and claims its words.* A shorter name sitting inside a
+     longer one cannot match separately, so "Arsenal's Gabriel Jesus" is about
+     Gabriel Jesus and not also about Gabriel Magalhães. Known non-player
+     phrases claim words the same way, which is how "Old Trafford" stops being
+     a story about Leeds' goalkeeper and "Aston Villa" stops being a player.
+   - *A first name never identifies a player alone.* Every false positive left
+     after span-claiming was a given name — a byline ("Jonathan Wilson"), a
+     player outside the pool ("Bradley Barcola"), a name in a list ("Anthony
+     Gordon"). The pool knows its own given names, so this needs no curation.
+   - *A surname needs its club*, with club names expanded first: FPL stores
+     "Man Utd" and a feed writes "Manchester United", and an unexpanded check
+     silently corroborates nothing.
+
+   Matching is over whole tokens, so "Sarr" can never be found inside "Sarri".
+   Measured against a stored day of BBC, Guardian and Sky output, the three
+   rules together removed six false positives and recovered one true one.
 2. **The text carries a date.** "Back in training" is stored, displayed, and
    consumed by nothing. Durations are read at their upper bound, so "two to
    three weeks" is three — being early about a return is the expensive mistake.
@@ -393,7 +407,13 @@ actually fed the model. Nothing that serves a request touches the network.
 ```bash
 uv run fplquant-ingest-news                     # fetch, resolve, store, prune
 uv run fplquant-ingest-news --require-mentions  # ...and fail if it matched nobody
+uv run fplquant-ingest-news --reresolve         # re-match stored articles after a rules change
 ```
+
+`--reresolve` is why the articles are kept rather than consumed in flight. When
+the matching rules are tightened, rows already written keep their old matches
+and the feeds will not carry those stories again — so without it the only remedy
+is dropping the table.
 
 That last flag is the point of the daily job. This project has already lost a
 month to a green workflow writing an empty table, and a broken resolver looks

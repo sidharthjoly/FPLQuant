@@ -55,6 +55,19 @@ class EmptyScrapeError(RuntimeError):
     """Raised when a run fetched nothing at all. See the module docstring."""
 
 
+def _reference_date(published_at: dt.datetime | None, today: dt.date) -> dt.date:
+    """The day a duration in an article should be counted from.
+
+    Its own publication date, not today. "Out for six weeks" written on the 28th
+    means back six weeks after the 28th, and reading it on the 31st does not
+    move the return. Falling back to today for an undated item is the only
+    option, and errs late, which is the safe direction.
+    """
+    if published_at is None:
+        return today
+    return published_at.date()
+
+
 def _too_old(item: FeedItem, cutoff: dt.datetime) -> bool:
     """Whether this item is too old to say anything about who is fit now.
 
@@ -124,7 +137,7 @@ def ingest_news(
         session.flush()
         report.stored += 1
 
-        signal = extract_signal(item.text, today)
+        signal = extract_signal(item.text, _reference_date(item.published_at, today))
         for match in index.resolve(item.text):
             session.add(
                 NewsMention(
@@ -143,6 +156,46 @@ def ingest_news(
                 report.dated_returns += 1
 
     return report
+
+
+def reresolve_mentions(session: Session, as_of: dt.datetime | None = None) -> tuple[int, int]:
+    """Rebuild every stored article's mentions with today's rules.
+
+    This is the revocation the articles are stored *for*. When the resolver is
+    tightened — and it has been, twice, each time after watching it match the
+    wrong footballer on live feeds — the fix has to reach the rows already
+    written, or production keeps serving matches made under rules nobody stands
+    behind any more. Without this the only remedy is deleting the table and
+    waiting for the feeds to carry the same stories again, which they will not.
+
+    Returns (mentions removed, mentions created).
+    """
+    as_of = as_of or dt.datetime.now(dt.UTC)
+    today = as_of.date()
+    index = PlayerIndex(session)
+
+    removed = session.query(NewsMention).delete()
+    session.flush()
+
+    created = 0
+    for article in session.query(NewsArticle).all():
+        text = f"{article.title}. {article.summary}".strip()
+        signal = extract_signal(text, _reference_date(article.published_at, today))
+        for match in index.resolve(text):
+            session.add(
+                NewsMention(
+                    article_id=article.id,
+                    player_id=match.player_id,
+                    confidence=match.confidence,
+                    matched_alias=match.matched_alias[:128],
+                    match_basis=match.basis,
+                    signal=signal.kind,
+                    return_date=signal.return_date,
+                    evidence=signal.evidence,
+                )
+            )
+            created += 1
+    return removed, created
 
 
 def prune_articles(session: Session, as_of: dt.datetime | None = None) -> int:
@@ -164,8 +217,13 @@ def prune_articles(session: Session, as_of: dt.datetime | None = None) -> int:
     return len(stale)
 
 
-def run_news_ingest(client: FeedClient | None = None, prune: bool = True) -> IngestReport:
+def run_news_ingest(
+    client: FeedClient | None = None, prune: bool = True, reresolve: bool = False
+) -> IngestReport:
     with session_scope() as session:
+        if reresolve:
+            removed, created = reresolve_mentions(session)
+            logger.info("Re-resolved stored articles: %d mention(s) -> %d", removed, created)
         report = ingest_news(session, client=client)
         if prune:
             removed = prune_articles(session)
@@ -183,6 +241,16 @@ def main() -> None:
         help="Keep articles older than the read window instead of deleting them.",
     )
     parser.add_argument(
+        "--reresolve",
+        action="store_true",
+        help=(
+            "Rebuild the mentions on every stored article with the current matching rules "
+            "before fetching. Use after tightening the resolver: articles already in the "
+            "database keep their old matches otherwise, and the feeds will not carry those "
+            "stories again."
+        ),
+    )
+    parser.add_argument(
         "--require-mentions",
         action="store_true",
         help=(
@@ -194,7 +262,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    report = run_news_ingest(prune=not args.no_prune)
+    report = run_news_ingest(prune=not args.no_prune, reresolve=args.reresolve)
     if args.require_mentions and report.mentions == 0:
         raise SystemExit(
             f"News ingest resolved no players ({report}). Either every article was already "

@@ -7,22 +7,29 @@ one player's fitness bulletin to another player's projection. The existing
 Transfermarkt matcher can afford to guess a little because a bad match only
 poisons a risk score; this cannot.
 
-So the rules are deliberately strict, and they refuse rather than guess:
+Three rules do the work, and each was derived from watching the resolver fail on
+real feeds rather than from imagining how it might.
 
-- **A full name is enough.** "Bruno Fernandes" in a headline is about Bruno
-  Fernandes. Two tokens matching a real player's real name is not a coincidence
-  a football feed produces by accident.
-- **A surname alone is not**, ever. It has to be corroborated by the club
-  appearing in the same text. There are two Silvas and three Joneses in a
-  Premier League season, and "Jones ruled out" with no club attached is not
-  evidence about any of them. This rule was not a precaution — run over a day
-  of live feeds without it, a bare-surname tier matched "Old Trafford" to Leeds'
-  goalkeeper James Trafford and "Jacob Greaves" to Hull's Matty Jacob.
-- **Whole words only.** Substring matching turns "Sarr" into "Sarri" and "Ward"
-  into "Edwards", and both would be silent.
-- **A handful of names never resolve without their full form**, because they
-  collide with ordinary English or with a stadium. The club check does not save
-  those: an Old Trafford match report naturally names both clubs.
+**Longest match wins, and claims its words.** Text is scanned for the longest
+name it contains and those words are then spoken for, so a shorter name sitting
+inside a longer one cannot match separately. "Barcelona close to deal for
+Arsenal's Gabriel Jesus" is about Gabriel Jesus and is *not* also about Gabriel
+Magalhães, even though his name is right there in the middle of it. Known
+non-player phrases claim words the same way, which is how "Old Trafford" stops
+being a story about Leeds' goalkeeper.
+
+**A first name never identifies a player on its own.** Every false positive left
+after span-claiming was a given name: a byline ("Jonathan Wilson"), a player
+outside the pool ("Bradley Barcola"), a first name in a list ("Anthony Gordon").
+The pool knows its own given names — four players are called Gabriel, two Wilson
+— so the rule needs no curation: if a token is somebody's first name, a bare
+occurrence of it is far more likely to be part of a full name than a reference
+to the one player who happens to wear it as a surname.
+
+**A surname needs its club.** Two Silvas and three Joneses in a season, and
+"Jones ruled out" with no club attached is not evidence about any of them. Club
+names are expanded first, because a feed writes "Manchester United" where FPL
+stores "Man Utd" and an unexpanded check silently fails to corroborate anything.
 
 What survives is scored, not accepted. `confidence` reaches the caller and
 `fplquant.config.settings.news_min_mention_confidence` decides what may move a
@@ -55,22 +62,76 @@ ALIAS_AND_CLUB_CONFIDENCE = 0.85
 # club check.
 MIN_ALIAS_LENGTH = 4
 
-# Names that collide with ordinary English or with a well-known non-player, and
-# therefore only ever resolve as part of a full name. These players are not
-# excluded — Rice and Mount matter — but "Rice" in a food headline and "Old
-# Trafford" in every Manchester match report are not about them, and the club
-# check cannot tell the difference because those articles name the club anyway.
-# Empirical: found by running the resolver over a day of live feeds, which is
-# also how any addition should be justified.
-FULL_NAME_ONLY_ALIASES = frozenset(
+# Surnames that are also everyday English words. Unlike the given-name rule
+# below, this cannot be derived from the pool — nothing in the database knows
+# that "rice" is a food — so it is curated, and deliberately short: names that
+# collide with a *stadium* are handled by `NON_PLAYER_PHRASES` instead, and
+# names that collide with a first name are handled by the pool itself.
+COMMON_WORD_SURNAMES = frozenset(
     {
-        "bailey", "bell", "best", "brown", "cash", "chalk", "cook", "field",
-        "fry", "gray", "green", "grey", "hall", "hunter", "jacob", "king",
-        "long", "marsh", "may", "moore", "mount", "park", "price", "reed",
-        "rice", "sharp", "short", "small", "stone", "trafford", "walker",
-        "ward", "white", "wood", "young",
+        "bailey", "bell", "best", "brown", "chalk", "cook", "field", "fry",
+        "gray", "green", "grey", "hall", "hunter", "king", "long", "marsh",
+        "may", "moore", "mount", "price", "reed", "rice", "sharp", "short",
+        "small", "stone", "walker", "ward", "white", "wood", "young",
     }
 )  # fmt: skip
+
+# Phrases that are not footballers but contain the name of one. They claim their
+# words before any player alias is considered, so the surname inside them never
+# comes up for matching. This is the same mechanism that stops a short name
+# matching inside a longer one — a stadium is just a name we know isn't a person.
+NON_PLAYER_PHRASES = frozenset(
+    {
+        # Grounds whose names contain a current or plausible surname.
+        "old trafford", "villa park", "selhurst park", "goodison park",
+        "elland road", "bramall lane", "carrow road", "turf moor",
+        "the city ground", "king power stadium", "stadium of light",
+        "the hawthorns", "craven cottage", "portman road", "molineux",
+        "st james park", "stamford bridge", "london stadium", "anfield",
+        "emirates stadium", "etihad stadium", "vitality stadium",
+        # Competitions, for the same reason.
+        "premier league", "champions league", "europa league", "conference league",
+        "fa cup", "carabao cup", "world cup", "match of the day",
+    }
+)  # fmt: skip
+
+# How the press writes each club, against how FPL stores it. Without this the
+# club check is far weaker than it looks: FPL's `name` is "Man Utd" and
+# "Nott'm Forest", and a feed saying "Manchester United" corroborates neither.
+#
+# Keyed on FPL's three-letter short name, which is the most stable identifier
+# the payload carries. A club that isn't listed — a promoted side, a future
+# rename — simply falls back to its FPL name and short name, so this degrades
+# to the old behaviour rather than breaking. Bare "City" and "United" are
+# deliberately absent: half the league answers to them.
+CLUB_ALIASES: dict[str, tuple[str, ...]] = {
+    "ARS": ("arsenal", "gunners"),
+    "AVL": ("aston villa", "villa"),
+    "BHA": ("brighton", "brighton and hove albion", "seagulls"),
+    "BOU": ("bournemouth", "afc bournemouth", "cherries"),
+    "BRE": ("brentford", "bees"),
+    "BUR": ("burnley", "clarets"),
+    "CHE": ("chelsea",),
+    "COV": ("coventry", "coventry city", "sky blues"),
+    "CRY": ("crystal palace", "palace", "eagles"),
+    "EVE": ("everton", "toffees"),
+    "FUL": ("fulham", "cottagers"),
+    "HUL": ("hull", "hull city", "tigers"),
+    "IPS": ("ipswich", "ipswich town", "tractor boys"),
+    "LEE": ("leeds", "leeds united"),
+    "LEI": ("leicester", "leicester city", "foxes"),
+    "LIV": ("liverpool",),
+    "MCI": ("man city", "manchester city"),
+    "MUN": ("man utd", "man united", "manchester united", "red devils"),
+    "NEW": ("newcastle", "newcastle united", "magpies"),
+    "NFO": ("nottm forest", "nottingham forest", "forest"),
+    "SHU": ("sheffield united", "blades"),
+    "SOU": ("southampton", "saints"),
+    "SUN": ("sunderland", "black cats"),
+    "TOT": ("spurs", "tottenham", "tottenham hotspur"),
+    "WHU": ("west ham", "west ham united", "hammers"),
+    "WOL": ("wolves", "wolverhampton wanderers"),
+}
 
 
 @dataclass(frozen=True)
@@ -83,10 +144,21 @@ class PlayerMatch:
 
 @dataclass(frozen=True)
 class _Alias:
-    text: str  # normalized
     player_id: int
     team_id: int
-    is_multi_token: bool
+
+
+@dataclass(frozen=True)
+class _Span:
+    """One occurrence of a known phrase, in token positions."""
+
+    start: int
+    length: int
+    phrase: str
+
+    @property
+    def end(self) -> int:
+        return self.start + self.length
 
 
 class PlayerIndex:
@@ -99,78 +171,66 @@ class PlayerIndex:
 
     def __init__(self, session: Session) -> None:
         players = session.query(Player).options(selectinload(Player.team)).all()
+
         self._aliases: dict[str, list[_Alias]] = {}
         self._club_terms: dict[int, set[str]] = {}
+        # Tokens that are somebody's first name. Derived from the pool rather
+        # than curated, which is what makes it keep working as squads change.
+        self._given_names: set[str] = set()
 
         for player in players:
             self._club_terms.setdefault(player.team_id, set()).update(
-                {normalize_text(player.team.name), normalize_text(player.team.short_name)}
+                _club_terms_for(player.team.name, player.team.short_name)
             )
-            for raw in self._alias_forms(player):
-                text = _clean_alias(raw)
+            first = _clean(player.first_name)
+            if " " not in first and len(first) >= MIN_ALIAS_LENGTH:
+                self._given_names.add(first)
+
+            for raw in _alias_forms(player):
+                text = _clean(raw)
                 if len(text) < MIN_ALIAS_LENGTH:
                     continue
-                entry = _Alias(
-                    text=text,
-                    player_id=player.id,
-                    team_id=player.team_id,
-                    is_multi_token=" " in text,
-                )
                 bucket = self._aliases.setdefault(text, [])
-                if not any(a.player_id == entry.player_id for a in bucket):
-                    bucket.append(entry)
+                if not any(a.player_id == player.id for a in bucket):
+                    bucket.append(_Alias(player.id, player.team_id))
 
-        # Precompiled so the per-article scan is one pass of word-boundary
-        # searches rather than a substring sweep — see the module docstring on
-        # why substring matching is not an option.
-        self._patterns = {
-            text: re.compile(rf"(?<!\w){re.escape(text)}(?!\w)") for text in self._aliases
-        }
+        self._blockers = {_clean(phrase) for phrase in NON_PLAYER_PHRASES}
+        # Club names block too, so "Aston Villa" is never read as a player
+        # called Villa. They are the commonest multi-word phrase in football
+        # writing that contains a plausible surname.
+        for terms in self._club_terms.values():
+            self._blockers.update(term for term in terms if " " in term)
 
-    @staticmethod
-    def _alias_forms(player: Player) -> list[str]:
-        """Every written form of one player's name worth looking for.
-
-        The last one is not redundant. FPL stores Bruno Fernandes's surname as
-        "Borges Fernandes", so neither his full name nor his display name
-        ("B.Fernandes") appears in a feed that calls him Bruno Fernandes — which
-        every feed does. Pairing the first name with the final token of the
-        surname recovers the form the press actually uses, and it is a *longer*
-        alias than the surname alone, so it does not weaken anything.
-        """
-        surname_tokens = player.second_name.split()
-        forms = [
-            f"{player.first_name} {player.second_name}",
-            player.web_name,
-            player.second_name,
-        ]
-        if len(surname_tokens) > 1:
-            forms.append(f"{player.first_name} {surname_tokens[-1]}")
-            forms.append(surname_tokens[-1])
-        return forms
-
-    def _club_named(self, text: str, team_id: int) -> bool:
-        return any(
-            term and re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text)
-            for term in self._club_terms.get(team_id, set())
+        self._max_tokens = max(
+            (len(phrase.split()) for phrase in (*self._aliases, *self._blockers)), default=1
         )
 
     def resolve(self, raw_text: str) -> list[PlayerMatch]:
         """Every player this text is plausibly about, best evidence first.
 
-        A player matched on their full name is not also reported on their
-        surname: the strongest basis for each player wins, so the confidence
-        reflects the best evidence rather than the last rule to fire.
+        Longest name first, and each claims its words — see the module
+        docstring. A player named by their full name is therefore reported once,
+        on that basis, rather than a second time on the surname inside it.
         """
-        text = _clean_alias(raw_text)
+        text = _clean(raw_text)
+        if not text:
+            return []
+        tokens = text.split()
+
+        claimed: set[int] = set()
         best: dict[int, PlayerMatch] = {}
 
-        for alias, entries in self._aliases.items():
-            if not self._patterns[alias].search(text):
+        for span in self._spans(tokens):
+            if any(position in claimed for position in range(span.start, span.end)):
                 continue
+            claimed.update(range(span.start, span.end))
+            if span.phrase in self._blockers:
+                continue  # a stadium or a club: the words are spoken for, nobody matched
+
+            entries = self._aliases.get(span.phrase, [])
             ambiguous = len(entries) > 1
             for entry in entries:
-                match = self._score(alias, entry, text, ambiguous)
+                match = self._score(span, entry, text, ambiguous)
                 if match is None:
                     continue
                 current = best.get(entry.player_id)
@@ -179,19 +239,81 @@ class PlayerIndex:
 
         return sorted(best.values(), key=lambda m: -m.confidence)
 
-    def _score(self, alias: str, entry: _Alias, text: str, ambiguous: bool) -> PlayerMatch | None:
-        if entry.is_multi_token and not ambiguous:
-            return PlayerMatch(entry.player_id, FULL_NAME_CONFIDENCE, alias, "full_name")
-        if alias in FULL_NAME_ONLY_ALIASES:
+    def _spans(self, tokens: list[str]) -> list[_Span]:
+        """Known phrases found in `tokens`, longest first then left to right.
+
+        Scanned as n-grams against a dictionary rather than as a few thousand
+        regex searches, which is both far faster over a day of articles and
+        exactly what makes matching whole-word for free: a token is a word, so
+        "Sarr" can never be found inside "Sarri".
+        """
+        found: list[_Span] = []
+        for start in range(len(tokens)):
+            for length in range(min(self._max_tokens, len(tokens) - start), 0, -1):
+                phrase = " ".join(tokens[start : start + length])
+                if phrase in self._aliases or phrase in self._blockers:
+                    found.append(_Span(start, length, phrase))
+        return sorted(found, key=lambda s: (-s.length, s.start))
+
+    def _club_named(self, text: str, team_id: int) -> bool:
+        return any(
+            term and re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text)
+            for term in self._club_terms.get(team_id, set())
+        )
+
+    def _score(self, span: _Span, entry: _Alias, text: str, ambiguous: bool) -> PlayerMatch | None:
+        if span.length > 1 and not ambiguous:
+            return PlayerMatch(entry.player_id, FULL_NAME_CONFIDENCE, span.phrase, "full_name")
+        # A single token, or a name two players share.
+        if span.length == 1 and (
+            span.phrase in COMMON_WORD_SURNAMES or span.phrase in self._given_names
+        ):
+            # An everyday word, or somebody's first name. Either way a bare
+            # occurrence is not a reference to this player — and if it were part
+            # of a full name, the longer span would already have claimed it.
             return None
-        # A single token, or a name two players share. Either way the club has
-        # to appear before this is about anybody in particular.
         if self._club_named(text, entry.team_id):
-            return PlayerMatch(entry.player_id, ALIAS_AND_CLUB_CONFIDENCE, alias, "alias_and_club")
+            return PlayerMatch(
+                entry.player_id, ALIAS_AND_CLUB_CONFIDENCE, span.phrase, "alias_and_club"
+            )
         return None
 
 
-def _clean_alias(text: str) -> str:
+def _alias_forms(player: Player) -> list[str]:
+    """Every written form of one player's name worth looking for.
+
+    The last two are not redundant. FPL stores Bruno Fernandes's surname as
+    "Borges Fernandes", so neither his full name nor his display name
+    ("B.Fernandes") appears in a feed that calls him Bruno Fernandes — which
+    every feed does. Pairing the first name with the final token of the surname
+    recovers the form the press actually uses.
+    """
+    surname_tokens = player.second_name.split()
+    forms = [
+        f"{player.first_name} {player.second_name}",
+        player.web_name,
+        player.second_name,
+    ]
+    if len(surname_tokens) > 1:
+        forms.append(f"{player.first_name} {surname_tokens[-1]}")
+        forms.append(surname_tokens[-1])
+    return forms
+
+
+def _club_terms_for(name: str, short_name: str) -> set[str]:
+    """Every way the press might name this club.
+
+    FPL's own name and short name always count, so a club missing from
+    `CLUB_ALIASES` still corroborates its own players and this degrades rather
+    than breaks.
+    """
+    terms = {_clean(name), _clean(short_name)}
+    extra = CLUB_ALIASES.get(short_name.upper(), ())
+    terms.update(_clean(alias) for alias in extra)
+    return {term for term in terms if term}
+
+
+def _clean(text: str) -> str:
     """Normalized, with punctuation flattened to spaces.
 
     FPL writes abbreviated display names — "Bruno G.", "F.Kadıoğlu" — and a feed
