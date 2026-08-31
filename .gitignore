@@ -51,3 +51,11 @@ injuries.sql.gz
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Database backups. `*.db` above does not match these — the name ends in the
+# date, not in `.db` — so without this they read as untracked cruft, and the
+# deploy's `git clean -fd` tries to delete them. On the server they are written
+# from inside the container and owned by root, so the deploy user cannot, and
+# the whole deploy aborts on a non-zero exit. One backup taken by the procedure
+# in DEPLOYMENT.md would otherwise break every deploy after it.
+*.db.bak*
