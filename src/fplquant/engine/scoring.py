@@ -212,15 +212,17 @@ def defensive_contribution_points(
     and one averaging 10.5 at the full two points, when in truth both cross the
     line about half the time.
 
-    Actions are taken as Poisson over the minutes actually played. Real counts
-    are overdispersed relative to Poisson — the pool's standard deviation is
-    about 4.0 against a mean of 7.6 — so this understates the tail slightly, and
-    the understatement is why the estimate must be built from the player's *own*
-    rate rather than the position's. Checked against 2025-26 with the rate
-    fitted on the first half of the season and the second half held out, it
-    predicts 26.9% of defenders reaching the threshold against 26.1% observed,
-    and 17.0% of midfielders against 18.9% — the midfielders' residual gap being
-    that overdispersion.
+    Actions are taken as Poisson over the minutes actually played. Checked
+    against 2025-26 two ways: on the positional prior alone it credits
+    defenders 0.416 points an appearance against 0.416 actually earned, and
+    midfielders 0.219 against 0.220; with each player's own rate fitted on the
+    first half of the season and the second half held out, 0.431 against 0.402
+    for defenders and 0.227 against 0.234 for midfielders.
+
+    Note that the positional priors in `fplquant.engine.usage` are not the
+    pool's mean rate. A threshold probability is convex in the rate, so the
+    average player's chance of clearing the bar is not the chance implied by the
+    average player's rate, and the prior is solved for the former.
 
     Minutes are conditioned on appearing: `expected_minutes` arrives already
     multiplied by the chance of playing at all, and dividing it back out

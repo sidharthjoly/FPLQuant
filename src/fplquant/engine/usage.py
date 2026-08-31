@@ -71,24 +71,34 @@ _MAX_PRICE_INDEX = 3.0
 # efforts, penalties, rebounds and own goals, which pay nobody an assist.
 ASSISTED_GOAL_FRACTION = 0.74
 
-# League-typical defensive actions per 90 by position, measured over every
-# 2025-26 appearance in the archive — the first season FPL counted them. These
-# are the prior a player's own rate is shrunk toward. Unlike the goal and assist
-# priors there is no price term: Defensive Contribution rewards the ball-winning
-# midfielders and centre-backs the price ladder rates *lowest*, so scaling this
-# by cost would get the sign wrong.
+# Defensive actions per 90 by position: the prior a player's own rate is shrunk
+# toward. Unlike the goal and assist priors there is no price term, because
+# Defensive Contribution rewards the ball-winning midfielders and centre-backs
+# the price ladder rates *lowest* — scaling this by cost would get the sign
+# wrong.
+#
+# These are not the pool's mean per-90 rate. They are the rate that makes the
+# *threshold* come out right, solved for against every 2025-26 appearance in the
+# archive: the value at which the model predicts the observed share of players
+# clearing the bar, over the real distribution of minutes played. That is a
+# different number from the mean because a threshold probability is not linear
+# in the rate, so feeding it the average player's rate does not return the
+# average player's chance of clearing it. The mean also runs high for a reason
+# that has nothing to do with defending — a substitute with ten minutes and two
+# tackles reads as 18 actions per 90.
 POSITION_DEFENSIVE_ACTIONS_PER_90: dict[int, float] = {
     GOALKEEPER: 0.0,  # not eligible for the threshold at all
-    DEFENDER: 7.55,
-    MIDFIELDER: 8.41,
-    FORWARD: 4.75,
+    DEFENDER: 8.08,
+    MIDFIELDER: 9.38,
+    FORWARD: 5.95,
 }
 # Minutes before a player's own defensive rate outweighs the positional prior.
 # Two full matches — shorter than the 540 used for goals and assists, because
 # defensive actions accumulate at eight or so a game where goals arrive at a
-# fraction of one, so a couple of matches is already a usable rate. Calibrated
-# on a real holdout: fitted on the first half of 2025-26, this predicts 26.9% of
-# defenders reaching the threshold in the second half against 26.1% observed.
+# fraction of one, so a couple of matches is already a usable rate. Checked on a
+# real holdout: with rates fitted on the first half of 2025-26 only, the model
+# credits second-half defenders 0.431 Defensive Contribution points an
+# appearance against 0.402 actually earned, and midfielders 0.227 against 0.234.
 DEFENSIVE_CREDIBILITY_MINUTES = 180.0
 
 # Bonus points are dominated by goal involvements — the BPS formula rewards

@@ -118,10 +118,19 @@ whole engine still produces a usable projection, built entirely from priors.
 Defensive actions are the one rate with no price term in its prior, and
 deliberately: Defensive Contribution rewards the ball-winning midfielders and
 centre-backs that the price ladder rates *lowest*, so scaling that prior by cost
-would get the sign backwards. It shrinks toward a flat positional average
-instead, and reaches even weight after two full matches — defensive actions
-arrive at eight or so a game where goals arrive at a fraction of one, so a
-couple of matches is already a usable rate.
+would get the sign backwards. It shrinks toward a positional prior instead, and
+reaches even weight after two full matches — defensive actions arrive at eight
+or so a game where goals arrive at a fraction of one, so a couple of matches is
+already a usable rate.
+
+That positional prior is not the pool's average rate, which would be the obvious
+choice and the wrong one. Clearing a threshold is convex in the rate, so the
+average player's *chance* of clearing it is not the chance implied by the
+average player's *rate* — plugging in the mean under-credits defenders by about
+a fifth, which matters most in the weeks when nobody has a rate of their own yet
+and every player is on the prior. The constants are solved for the right thing
+instead: the rate at which the model reproduces the share of players who
+actually cleared the bar, over the real distribution of minutes played.
 
 ## Commands
 
@@ -238,7 +247,7 @@ because that is what it is. Scoring the rule at a player's *average* would give
 a defender averaging 9.5 actions nothing and one averaging 10.5 the full two
 points, when both cross the line about half the time; instead the actions are
 taken as Poisson over the minutes played and the model asks for
-`P(actions >= threshold)`. It is worth about 0.44 points an appearance to a
+`P(actions >= threshold)`. It is worth about 0.42 points an appearance to a
 defender — a sixth of what defenders score — and it separates the ball-winning
 centre-backs and holding midfielders that nothing else in the model can tell
 apart. The thresholds were not looked up but measured out of the archive: take

@@ -13,6 +13,7 @@ from fplquant.engine.scoring import (
     expected_step_count,
     poisson_pmf,
 )
+from fplquant.engine.usage import POSITION_DEFENSIVE_ACTIONS_PER_90
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER
 
 
@@ -158,14 +159,16 @@ def test_goalkeepers_are_not_eligible_for_defensive_contribution() -> None:
 def test_the_defensive_term_matches_the_rate_measured_in_2025_26() -> None:
     """Calibration, against the real thing rather than against itself.
 
-    A defender at the league-average rate of 7.55 actions per 90 earned about
-    0.44 Defensive Contribution points per appearance across 2025-26 — measured
-    from the archive, over every appearance, not fitted here. The model has to
-    land near that or the term is decorative.
+    Averaged over every 2025-26 defender appearance in the archive, Defensive
+    Contribution was worth 0.416 points an appearance. A defender on the
+    positional prior, playing a typical full match, has to land near that or the
+    term is decorative — and it has to do so using the constant the engine
+    actually ships, not one written into the test.
     """
-    league_average = scoring.expected_points(_defender(7.55, p_start=1.0))
+    rate = POSITION_DEFENSIVE_ACTIONS_PER_90[DEFENDER]
+    typical = scoring.expected_points(_defender(rate, p_start=1.0))
 
-    assert 0.30 < league_average.defensive_contribution < 0.55
+    assert 0.35 < typical.defensive_contribution < 0.60
 
 
 def test_defensive_contribution_is_included_in_the_total() -> None:
