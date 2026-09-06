@@ -17,12 +17,15 @@ from fplquant.models.orm import InjuryRecord, Player
 logger = logging.getLogger(__name__)
 
 
-def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, player: Player) -> None:
+def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, player: Player) -> bool:
     """Search Transfermarkt for `player` and cache the match (or the lack of one).
 
     No-op if already resolved (matched or previously confirmed unmatched) —
     call `resolve_transfermarkt_id` only for players whose
     `transfermarkt_lookup_status == "unresolved"` to avoid needless requests.
+
+    Returns whether a verdict was reached. False means the search told us
+    nothing, which across the pool is the signature of a blocked host.
     """
     full_name = f"{player.first_name} {player.second_name}"
     query = urllib.parse.quote(full_name)
@@ -48,7 +51,7 @@ def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, play
             full_name,
             player.team.short_name,
         )
-        return
+        return False
 
     match = match_player(
         fpl_full_name=full_name,
@@ -61,19 +64,43 @@ def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, play
         # about this player, so it is worth caching.
         player.transfermarkt_lookup_status = "unmatched"
         logger.info("No Transfermarkt match for %s (%s)", full_name, player.team.short_name)
-        return
+        return True
     player.transfermarkt_id = match.transfermarkt_id
     player.transfermarkt_slug = match.slug
     player.transfermarkt_lookup_status = "matched"
     session.flush()
+    return True
 
 
-def sync_injury_history(session: Session, client: TransfermarktClient, player: Player) -> None:
-    """Replace `player`'s injury records with a fresh scrape from Transfermarkt."""
+def sync_injury_history(session: Session, client: TransfermarktClient, player: Player) -> bool:
+    """Replace `player`'s injury records with a fresh scrape from Transfermarkt.
+
+    Returns whether the scrape actually returned history, so a caller can tell
+    a working run from one where every request came back empty.
+    """
     if player.transfermarkt_id is None or player.transfermarkt_slug is None:
-        return
+        return False
 
     records = client.get_injury_history(player.transfermarkt_slug, player.transfermarkt_id)
+
+    if not records:
+        # An empty history and a blocked request are the same bytes, and they
+        # want opposite handling: one means "this player has no injuries, clear
+        # their rows", the other means "we learned nothing, keep what we have".
+        # Transfermarkt answers a blocked host with an empty page for *every*
+        # player, so trusting empty deletes the whole table one player at a
+        # time — and reports success, because every delete worked. The weekly
+        # VM cron is exactly that host. Refusing to delete on empty costs only
+        # a stale row for a player whose history was genuinely retracted, which
+        # is rare and recoverable; the other way round is not.
+        logger.warning(
+            "No injury history returned for %s (%s) — keeping the %d record(s) already "
+            "stored rather than treating an empty response as authoritative.",
+            player.web_name,
+            player.team.short_name,
+            len(player.injury_records),
+        )
+        return False
 
     session.query(InjuryRecord).filter_by(player_id=player.id).delete()
     for record in records:
@@ -89,9 +116,10 @@ def sync_injury_history(session: Session, client: TransfermarktClient, player: P
             )
         )
     session.flush()
+    return True
 
 
-def sync_nationality(session: Session, client: TransfermarktClient, player: Player) -> None:
+def sync_nationality(session: Session, client: TransfermarktClient, player: Player) -> bool:
     """Fetch and store `player`'s nationality from their Transfermarkt profile.
 
     Unlike injury history, nationality doesn't change, so this only needs to
@@ -99,10 +127,11 @@ def sync_nationality(session: Session, client: TransfermarktClient, player: Play
     `nationality is None`, to avoid re-fetching a page for no reason.
     """
     if player.transfermarkt_id is None or player.transfermarkt_slug is None:
-        return
+        return False
 
     player.nationality = client.get_nationality(player.transfermarkt_slug, player.transfermarkt_id)
     session.flush()
+    return player.nationality is not None
 
 
 def clear_unmatched_cache(session: Session) -> int:
@@ -129,12 +158,16 @@ _COMMIT_EVERY = 25
 def _each(
     session: Session,
     players: list[Player],
-    step: Callable[[Session, TransfermarktClient, Player], None],
+    step: Callable[[Session, TransfermarktClient, Player], bool],
     client: TransfermarktClient,
     delay: float,
     label: str,
-) -> None:
+) -> int:
     """Run `step` over every player, surviving individual failures.
+
+    Returns how many calls actually learned something, which is the only way to
+    tell a working pass from one the host was blocked for — both complete, and
+    both log the same "n/n players".
 
     One player must not be able to end the run, and the reason is not
     hypothetical caution. A single squad member is named
@@ -150,9 +183,11 @@ def _each(
     """
     total = len(players)
     failures = 0
+    productive = 0
     for i, player in enumerate(players, start=1):
         try:
-            step(session, client, player)
+            if step(session, client, player):
+                productive += 1
         except Exception:
             failures += 1
             logger.warning(
@@ -169,6 +204,7 @@ def _each(
             logger.info("%s %d/%d players", label, i, total)
     if failures:
         logger.warning("%s: %d of %d players failed and were skipped", label, failures, total)
+    return productive
 
 
 @dataclass(frozen=True)
@@ -184,13 +220,24 @@ class InjuryIngestResult:
 
     attempted: int  # players that were unresolved when the run started
     resolved: int  # ...and that the run reached a verdict on
+    synced: int  # matched players whose history the scrape actually returned
     matched: int  # players with a Transfermarkt id, after the run
     injury_records: int  # rows in the injury table, after the run
 
     @property
     def looks_blocked(self) -> bool:
-        """True when the run had work to do and completed none of it."""
-        return self.attempted > 0 and self.resolved == 0
+        """True when the run had work to do and completed none of it.
+
+        Both passes count, and the sync pass is the one that matters weekly.
+        Once every player is resolved there is nothing left to search, so a
+        check that watched only the resolve pass would fall silent for good
+        the moment a refresh succeeded — which is precisely when it needs to
+        keep working. A pass with nothing to do is not evidence of blocking;
+        a pass with work that returned nothing is.
+        """
+        no_verdicts = self.attempted > 0 and self.resolved == 0
+        no_history = self.matched > 0 and self.synced == 0
+        return no_verdicts or no_history
 
 
 def run_injury_ingest(
@@ -221,6 +268,7 @@ def run_injury_ingest(
                 logger.info("Cleared %d cached 'unmatched' verdicts for retry", cleared)
 
         attempted = 0
+        synced = 0
         with session_scope() as session:
             players = session.query(Player).filter_by(transfermarkt_lookup_status="unresolved")
             if limit is not None:
@@ -241,7 +289,9 @@ def run_injury_ingest(
 
         with session_scope() as session:
             matched = session.query(Player).filter_by(transfermarkt_lookup_status="matched").all()
-            _each(session, matched, sync_injury_history, client, delay, "Synced injury history for")
+            synced = _each(
+                session, matched, sync_injury_history, client, delay, "Synced injury history for"
+            )
 
         with session_scope() as session:
             needs_nationality = (
@@ -261,6 +311,7 @@ def run_injury_ingest(
             return InjuryIngestResult(
                 attempted=attempted,
                 resolved=attempted - still_unresolved,
+                synced=synced,
                 matched=session.query(Player)
                 .filter_by(transfermarkt_lookup_status="matched")
                 .count(),
@@ -301,9 +352,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     result = run_injury_ingest(limit=args.limit, retry_unmatched=args.retry_unmatched)
     logger.info(
-        "Injury ingest: attempted=%d resolved=%d matched=%d injury_records=%d",
+        "Injury ingest: attempted=%d resolved=%d synced=%d matched=%d injury_records=%d",
         result.attempted,
         result.resolved,
+        result.synced,
         result.matched,
         result.injury_records,
     )
@@ -315,11 +367,15 @@ def main() -> None:
     # sane. See the note in `resolve_transfermarkt_id` on why blocking is silent.
     if result.looks_blocked:
         logger.error(
-            "Resolved 0 of %d unresolved players. Transfermarkt returns an empty result set "
+            "Nothing came back: reached a verdict on %d of %d unresolved players and got "
+            "history for %d of %d matched ones. Transfermarkt returns an empty result set "
             "for every query when it blocks a host, and it blocks datacentre IPs — this "
             "host is almost certainly one. The scrape has to run from a residential "
             "connection; see DEPLOYMENT.md.",
+            result.resolved,
             result.attempted,
+            result.synced,
+            result.matched,
         )
         sys.exit(1)
     if result.matched == 0:

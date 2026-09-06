@@ -357,7 +357,7 @@ def test_a_run_that_resolved_nobody_is_reported_as_blocked() -> None:
     having written nothing. The only thing that tells them apart is whether
     anything moved."""
     blocked = ingest_injuries.InjuryIngestResult(
-        attempted=623, resolved=0, matched=0, injury_records=0
+        attempted=623, resolved=0, synced=0, matched=0, injury_records=0
     )
     assert blocked.looks_blocked
 
@@ -368,7 +368,7 @@ def test_a_full_table_does_not_hide_a_blocked_run() -> None:
     table is non-empty passes forever and says nothing about the run — which is
     why it went a month unnoticed."""
     stale = ingest_injuries.InjuryIngestResult(
-        attempted=19, resolved=0, matched=573, injury_records=3267
+        attempted=19, resolved=0, synced=573, matched=573, injury_records=3267
     )
     assert stale.looks_blocked
 
@@ -378,7 +378,7 @@ def test_a_week_with_nothing_to_resolve_is_not_a_failure() -> None:
     of blocking. That must stay quiet, or the check cries wolf until it is
     switched off."""
     quiet = ingest_injuries.InjuryIngestResult(
-        attempted=0, resolved=0, matched=573, injury_records=3267
+        attempted=0, resolved=0, synced=573, matched=573, injury_records=3267
     )
     assert not quiet.looks_blocked
 
@@ -387,6 +387,90 @@ def test_partial_progress_is_progress() -> None:
     """Some names genuinely have no Transfermarkt entry. One verdict reached is
     proof the search itself is working."""
     partial = ingest_injuries.InjuryIngestResult(
-        attempted=19, resolved=1, matched=574, injury_records=3300
+        attempted=19, resolved=1, synced=574, matched=574, injury_records=3300
     )
     assert not partial.looks_blocked
+
+
+def test_an_empty_scrape_does_not_delete_the_history_it_could_not_read(
+    db_session: Session,
+) -> None:
+    """The sync replaces a player's records with what came back. A blocked host
+    returns an empty page for every player, which is byte-identical to "this
+    player has never been injured" — so trusting it deletes the whole table one
+    player at a time, while every delete succeeds and the job reports success.
+
+    Production was two and a half hours from exactly this: 3267 hand-applied
+    records, 573 matched players, and a weekly cron on a host Transfermarkt
+    blocks."""
+    player = _team_and_player(db_session)
+    player.transfermarkt_id = 433177
+    player.transfermarkt_slug = "bukayo-saka"
+    player.transfermarkt_lookup_status = "matched"
+    db_session.add(
+        InjuryRecord(
+            player_id=player.id,
+            season="25/26",
+            injury_type="Hamstring",
+            start_date=dt.date(2026, 8, 1),
+            end_date=dt.date(2026, 8, 20),
+            days_out=19,
+            games_missed=3,
+        )
+    )
+    db_session.flush()
+
+    blocked = StubTransfermarktClient(search_results=[], injury_records=[])
+    learned = sync_injury_history(db_session, blocked, player)
+
+    assert learned is False
+    # The record it could not read is still there.
+    assert db_session.query(InjuryRecord).filter_by(player_id=player.id).count() == 1
+
+
+def test_a_scrape_that_returns_history_still_replaces_it(db_session: Session) -> None:
+    """The guard must not turn the sync into an append-only one: real history
+    that came back still replaces what was stored."""
+    player = _team_and_player(db_session)
+    player.transfermarkt_id = 433177
+    player.transfermarkt_slug = "bukayo-saka"
+    player.transfermarkt_lookup_status = "matched"
+    db_session.add(
+        InjuryRecord(
+            player_id=player.id,
+            season="24/25",
+            injury_type="Stale row",
+            start_date=dt.date(2025, 1, 1),
+            end_date=dt.date(2025, 1, 10),
+        )
+    )
+    db_session.flush()
+
+    fresh = StubTransfermarktClient(
+        search_results=[],
+        injury_records=[
+            InjuryRecordData(
+                season="25/26",
+                injury_type="Hamstring",
+                start_date=dt.date(2026, 8, 1),
+                end_date=dt.date(2026, 8, 20),
+                days_out=19,
+                games_missed=3,
+            )
+        ],
+    )
+    learned = sync_injury_history(db_session, fresh, player)
+
+    assert learned is True
+    stored = db_session.query(InjuryRecord).filter_by(player_id=player.id).all()
+    assert [r.injury_type for r in stored] == ["Hamstring"]
+
+
+def test_a_pass_that_read_no_history_at_all_is_reported_as_blocked() -> None:
+    """Once every player is resolved there is nothing left to search, so the
+    resolve pass falls silent. The sync pass is what still runs weekly, and it
+    is the one that would quietly return nothing on a blocked host."""
+    all_resolved_but_blocked = ingest_injuries.InjuryIngestResult(
+        attempted=0, resolved=0, synced=0, matched=573, injury_records=3267
+    )
+    assert all_resolved_but_blocked.looks_blocked
