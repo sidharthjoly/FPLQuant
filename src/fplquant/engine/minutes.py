@@ -43,6 +43,7 @@ from fplquant.lineup.starts import compute_start_probabilities, did_start
 from fplquant.ml.features import MinutesFeatures
 from fplquant.ml.minutes_model import TrainedMinutesModel, load
 from fplquant.models.orm import Player
+from fplquant.news.selection import start_gate
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER
 from fplquant.schedule import get_next_fixture_by_team
 
@@ -274,6 +275,14 @@ def compute_minutes_profiles(
     for. Note where the gate is applied: *before* the group is normalised, so
     a player the news rules out hands his slot to a teammate rather than
     deleting it, which is the property the whole normalisation exists for.
+
+    The gate reaches the start probability through `news.selection.start_gate`,
+    which discounts a *partial* availability further before it is normalised:
+    FPL's percentage is the chance a player features, and a manager being
+    careful with somebody benches him rather than dropping him. It is inert at
+    0.0 and 1.0, so this changes nothing for a player who is simply fit or
+    simply out. The number reported as `availability` below is the bare gate,
+    untransformed.
     """
     players = session.query(Player).options(selectinload(Player.gameweek_stats)).all()
     if not players:
@@ -335,14 +344,25 @@ def compute_minutes_profiles(
                 # rotation nudge is not applied on top — it would charge the
                 # same evidence twice.
                 blended.append(model_probabilities[player.id])
-                availability_gates.append(gate(player))
+                # `start_gate`, not the bare availability: a doubtful player is
+                # likelier to be benched than dropped, so his news costs him
+                # more start probability than it costs him availability. It
+                # goes into *this* vector rather than into `blended` because
+                # `_redistribute_unavailable` frees exactly the mass this
+                # argument withholds — folding it into the estimate instead
+                # would leave the group short of eleven starters.
+                availability_gates.append(start_gate(gate(player)))
             else:
                 estimate = credibility * observed + (1 - credibility) * prior
                 # Availability is applied *before* normalisation on purpose: an
                 # injured player's share of the position group's slots is then
                 # redistributed to his teammates by the scaling below, which is
                 # what actually happens when a first choice is ruled out.
-                blended.append(estimate * gate(player) * rotation.get(player.id, 1.0))
+                # Here the selection discount belongs in the estimate: unlike
+                # the model arm above, `_normalise_to_slots` rescales the group
+                # back up to its formation's slots, so the withheld mass is
+                # redistributed by the normalisation itself.
+                blended.append(estimate * start_gate(gate(player)) * rotation.get(player.id, 1.0))
                 availability_gates.append(1.0)
 
         if model_probabilities:
@@ -357,6 +377,11 @@ def compute_minutes_profiles(
             matches = len(stats)
             starts = sum(1 for s in stats if did_start(s))
             appearances = sum(1 for s in stats if s.minutes > 0)
+            # The *bare* fitness gate, not `start_gate`. It is reported as
+            # this player's availability, where it has to stay bit-identical to
+            # `chance_of_playing`, and it feeds the bench term below, which
+            # moves the other way: a doubtful player who does not start is a
+            # substitute rather than an absentee.
             player_availability = gate(player)
 
             non_starts = max(0, matches - starts)

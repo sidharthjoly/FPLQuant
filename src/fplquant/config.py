@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     # publisher's wording starts producing matches you don't trust.
     news_feeds_feed_the_model: bool = True
 
+    # Whether a doubt is allowed to discount *starting* by more than it
+    # discounts *featuring* — see `fplquant.news.selection`. Deliberately a
+    # separate switch from `news_feeds_feed_the_model` above: that one gates
+    # signals derived from third-party *feeds*, whose risk is a wrong player
+    # being matched out of free text. This signal is derived from FPL's own
+    # published percentage, where there is no matching step and nothing to
+    # misidentify, so the two want turning off for entirely different reasons.
+    news_selection_feeds_the_model: bool = True
+
     redis_url: str = "redis://localhost:6379/0"
     optimize_cache_ttl_seconds: int = 3600
 

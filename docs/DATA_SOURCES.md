@@ -10,6 +10,14 @@
   2026-08-31), and the parser is strict: wording it does not recognise produces
   no signal rather than a guess.
 
+  The same percentage is read a second time, as a statement about *selection*
+  rather than fitness: FPL answers "will he play", and a manager being careful
+  with a player benches him rather than dropping him, so a doubt costs more
+  start probability than it costs availability. See `src/fplquant/news/selection.py`,
+  and note this is a reading of FPL's own number with no entity resolution in it
+  — a different risk profile from the feeds below, and a separate kill switch
+  (`FPLQUANT_NEWS_SELECTION_FEEDS_THE_MODEL`).
+
 - **Public football news feeds** (BBC Sport, The Guardian, Sky Sports) — RSS,
   fetched daily by `fplquant-ingest-news` (`src/fplquant/news/feeds.py`),
   configurable via `FPLQUANT_NEWS_FEED_URLS`. **RSS deliberately, not page

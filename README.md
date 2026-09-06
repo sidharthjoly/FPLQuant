@@ -40,7 +40,10 @@ Cloud VM.
   next-round percentage cannot express: *when* a player is back. Availability
   is then projected per gameweek and per club kickoff, so a ban expiring on the
   Tuesday stops writing a player off for the next two months. Pinned to FPL's
-  own number for the next round, so nothing is discounted twice.
+  own number for the next round, so nothing is discounted twice. The same news
+  is read a second way, as a team-sheet decision rather than a fitness one: a
+  doubt costs more start probability than it costs availability, because a
+  manager being careful with a player benches him rather than dropping him.
 - **Squad optimizer** — ILP selection (PuLP) under budget, position, and
   club-count constraints, with an optional Sharpe-style risk-adjusted
   objective.
@@ -345,6 +348,72 @@ percentage is already exactly right.
 
 `GET /news?only_time_varying=true` returns the subset worth acting on, ordered
 by when each player is back.
+
+### The same news, read as a team-sheet decision
+
+FPL's percentage answers the question FPL asks — *will he play?* — and the
+engine was spending it answering a different one: *will he start?* For a fully
+fit player those are the same question. For a player carrying a knock they come
+apart, because a manager has a third option between playing him and leaving him
+out, and it is the one they usually take: name him on the bench and bring him on
+if the game needs it. So 75% to *feature* is not 75% to *start*; it is a decent
+chance of half an hour.
+
+Reading the percentage as a start probability therefore overrates exactly the
+players a manager is being careful with. That is a systematic error rather than
+a noisy one, and it lands on the ownable end of the pool — Caicedo, Maddison,
+Mount and Bruno Guimarães were all carrying a doubt on 2026-09-06.
+
+`src/fplquant/news/selection.py` corrects it with one monotone transform of the
+availability the engine already holds:
+
+```
+start_gate(a) = a x (1 - 0.5 x (1 - a))      # 0.75 -> 0.66,  0.50 -> 0.38
+```
+
+Three properties are what make it safe to run over the whole pool. It is
+**inert at the ends** — 1.0 stays 1.0 and 0.0 stays 0.0, so the ~97% of players
+with nothing wrong with them come through bit for bit. It is **monotone**, so it
+can never reorder two players the availability number already ordered. And it
+takes **no new input**, so there is no second signal to plumb through the
+horizon and no way for it to disagree with the availability layer, because it is
+a function of that layer's own output. That last property also gives it the
+right behaviour over time for free: availability already recovers a doubt as the
+weeks pass, so the selection discount relaxes on the same schedule and lapses
+when the doubt does.
+
+Where it is applied matters as much as the shape. It goes into
+`engine/minutes.py`, where start probability is an explicit quantity and a club
+still fields eleven players, so the probability a doubtful player gives up is
+**handed to his teammates** rather than deleted — which is what actually happens
+when a manager decides to be careful with somebody. It is deliberately *not*
+applied in `form/fixtures.py`, whose base is an unconditional EWMA that already
+averages in benched weeks and which has no normalisation to absorb a third
+discount; the next-match path behind `/transfers` is untouched for the same
+reason the news layer leaves it alone.
+
+Measured on the pool as of 2026-08-31 rather than assumed: 22 flagged players
+lose start probability and 165 teammates gain it, and the reported
+`availability` field stays bit-identical to `chance_of_playing` for all 609.
+Total appearance probability falls for all 22 — the discount moves a player from
+the XI toward the bench without ever making him likelier to feature.
+
+The downstream effect is small and worth stating as such. Over a five-gameweek
+horizon the candidate projections move by **under 1%** — the largest single
+change is +0.10 points on an 11-point projection — which is nonetheless enough,
+at the pool boundary, to swap Gravenberch out of the planner's candidate pool
+and Lukić into it. That swap is marginal rather than decisive, and it is the
+honest headline: this is a correctness fix to a systematic error, not a large
+new signal. (Live numbers will differ: prod carried 15 doubt players on
+2026-09-06 against the 22 in the 2026-08-31 snapshot these figures come from.)
+
+The 0.5 is a **prior, not a fitted value**, and cannot honestly be presented as
+anything else yet: the archived seasons carry no injury news at all
+(`backtest/hydrate.py` sets every status to available), so there is nothing
+historical to calibrate against, and `player_snapshots` — which does archive
+status day by day — only began collecting on 2026-08-31. Once a season of those
+exists this is the first constant here that should be fitted rather than
+assumed. `FPLQUANT_NEWS_SELECTION_FEEDS_THE_MODEL=false` turns it off.
 
 ### Reading the press for the dates FPL doesn't give
 
@@ -669,7 +738,8 @@ src/fplquant/
   data/             FPL API client + ingestion pipeline
   form/             EWMA-based form scoring (points + underlying stats)
   lineup/           inferred formations, start probability, fatigue
-  news/             FPL news + RSS feeds -> per-gameweek availability
+  news/             FPL news + RSS feeds -> per-gameweek availability,
+                    and the same news read as a start-probability discount
   optimizer/        ILP squad selection (PuLP), budget/position/club constraints
   risk/             injury risk scoring + risk-adjusted expected points
   market/           price/ownership momentum, volatility, teammate correlation

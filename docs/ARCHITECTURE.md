@@ -136,6 +136,40 @@ Everything else, including an injury with no return date (47 of 118 strings) and
 any wording the parser does not recognise, keeps the published number in every
 gameweek.
 
+### The same news, read as selection
+
+Availability answers *will he play*. The engine spends that number answering
+*will he start*, and for a player carrying a knock those diverge: a manager
+being careful has a third option, which is to name him on the bench. So reading
+the percentage as a start probability overrates precisely the players a manager
+is handling carefully.
+
+`news/selection.py` corrects it with one monotone transform of the availability
+already in hand — `start_gate(a) = a x (1 - 0.5 x (1 - a))` — inert at 0.0 and
+1.0, so the overwhelming majority of the pool is untouched bit for bit, and
+order-preserving, so it can never reorder two players availability had already
+ordered. Taking no input beyond availability is what keeps it from being a
+second signal that can disagree with the first, and it inherits the right
+behaviour over time for free: as `availability.py` recovers a doubt, the
+discount relaxes with it.
+
+It is applied in `engine/minutes.py`, on the vector `_redistribute_unavailable`
+frees mass from, so the start probability a doubtful player gives up is handed
+to his teammates rather than deleted — a club still names eleven. Folding it
+into the estimate instead would leave the position group short of a starter.
+The bench term deliberately keeps the *bare* availability, since being handled
+carefully is the reason a player ends up a substitute.
+
+It is deliberately not applied in `form/fixtures.py`: that base is an
+unconditional EWMA which already averages in benched weeks, and there is no
+normalisation there to absorb a third discount.
+
+The 0.5 is a prior. `backtest/hydrate.py` sets every archived status to
+available, so the backtest is structurally blind to it and there is nothing
+historical to fit against; `player_snapshots` began archiving status on
+2026-08-31 and is the data that will eventually allow one.
+`FPLQUANT_NEWS_SELECTION_FEEDS_THE_MODEL=false` disables it.
+
 The numbers flow through `engine/minutes.py` and `engine/usage.py` into
 `engine/horizon.py`, which recomputes usage once per distinct availability
 vector. It has to be recomputed rather than scaled afterwards: shares are
