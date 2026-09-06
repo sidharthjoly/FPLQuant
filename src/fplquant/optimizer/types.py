@@ -28,7 +28,15 @@ class PlayerCandidate:
     next_opponent: str | None = None
     next_opponent_is_home: bool | None = None
     fixture_difficulty: int | None = None  # FPL's own 1 (easiest) - 5 (hardest) rating
+    # Two different questions, and they must not be conflated. `chance_of_playing`
+    # is fitness — FPL's own press-conference number, "will he be available".
+    # `start_probability` is selection — "will he be named in the XI" — which
+    # folds that fitness together with how often his coach actually picks him.
+    # A fully fit squad player has chance_of_playing 1.0 and a start_probability
+    # well below it. Only the horizon path models selection, so it is the only
+    # one that populates the second; None means "not modelled here", not "zero".
     chance_of_playing: float = 1.0  # 0.0-1.0
+    start_probability: float | None = None  # 0.0-1.0, horizon path only
 
 
 @dataclass(frozen=True)

@@ -120,3 +120,41 @@ def test_a_projection_response_is_served_from_cache_the_second_time(
     second = api_client.get("/projections?horizon=2&limit=3").json()
 
     assert first == second
+
+
+def test_plan_reports_fitness_and_selection_as_separate_fields(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """The planner models selection, so it sends `start_probability` as well as
+    fitness. It used to send its selection odds *as* `chance_of_playing`, and
+    the dashboard renders that field as "N% to play" — so a fully fit player
+    who is merely a rotation risk was presented to the user as a fitness
+    doubt."""
+    _seed(db_session)
+
+    body = api_client.post("/plan", json={"horizon": 2}).json()
+    squad = body["gameweeks"][0]["squad"]
+    assert squad
+
+    for player in squad:
+        # Nobody in the seeded league is flagged, so fitness is certainty...
+        assert player["chance_of_playing"] == 1.0
+        # ...and selection is a separate, populated number.
+        assert player["start_probability"] is not None
+        assert 0.0 <= player["start_probability"] <= 1.0
+
+    assert any(player["start_probability"] < 1.0 for player in squad)
+
+
+def test_optimize_does_not_claim_to_model_selection(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """`/optimize` is a next-match path and models fitness only. It must leave
+    `start_probability` null rather than defaulting it to 1.0, which would tell
+    a client every player is nailed on to start."""
+    _seed(db_session)
+
+    body = api_client.post("/optimize", json={"budget": 100.0}).json()
+
+    assert body["squad"]
+    assert all(player["start_probability"] is None for player in body["squad"])

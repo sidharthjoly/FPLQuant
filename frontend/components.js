@@ -78,7 +78,14 @@ export function donutGauge(pct, color) {
 /** Cost/points plus, when available, next opponent/venue/difficulty and
  * playing-chance — the "will they have a good game against this opponent at
  * this venue" context behind why a player was picked, benched, or offered
- * as a transfer target. */
+ * as a transfer target.
+ *
+ * "to play" and "to start" are deliberately different labels for different
+ * numbers. `chance_of_playing` is fitness, so it reads "to play" and is only
+ * worth showing when it is short of certain. `start_probability` is selection
+ * odds and only the planner sends it; a fully fit rotation risk is 100% to
+ * play and may still be 46% to start, so labelling that "to play" told the
+ * user their striker was injured when he was not. */
 export function playerMetaLine(player) {
   let text = `£${(player.now_cost / 10).toFixed(1)}m · ${player.predicted_points.toFixed(2)} pts`;
   if (player.next_opponent) {
@@ -90,6 +97,9 @@ export function playerMetaLine(player) {
   }
   if (player.chance_of_playing < 1) {
     text += ` · ${Math.round(player.chance_of_playing * 100)}% to play`;
+  }
+  if (player.start_probability != null) {
+    text += ` · ${Math.round(player.start_probability * 100)}% to start`;
   }
   return text;
 }

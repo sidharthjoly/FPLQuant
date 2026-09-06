@@ -248,6 +248,20 @@ class SimilarPlayerOut(BaseModel):
 
 
 class SquadPlayerOut(BaseModel):
+    """A player as the optimizer or planner returns them.
+
+    `chance_of_playing` and `start_probability` answer different questions and
+    a client must not present one as the other. The first is fitness — FPL's
+    own press-conference percentage for the next round. The second is
+    selection: how likely this player is to be *named in the XI*, which folds
+    that fitness together with how often their coach picks them. A fully fit
+    rotation risk has `chance_of_playing` 1.0 and a much lower
+    `start_probability`.
+
+    Only `/plan` models selection, so `start_probability` is None on `/optimize`
+    and `/transfers/plan`. None means "not modelled on this path", never zero.
+    """
+
     model_config = ConfigDict(from_attributes=True)
 
     player_id: int
@@ -260,7 +274,8 @@ class SquadPlayerOut(BaseModel):
     next_opponent: str | None = None
     next_opponent_is_home: bool | None = None
     fixture_difficulty: int | None = None
-    chance_of_playing: float = 1.0
+    chance_of_playing: float = 1.0  # fitness: "will they be available"
+    start_probability: float | None = None  # selection: "will they be picked"
 
 
 class OptimizeRequest(BaseModel):

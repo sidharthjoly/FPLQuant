@@ -6,7 +6,11 @@ from fplquant.engine.horizon import (
     HorizonProjection,
     project_horizon,
 )
-from fplquant.form.fixtures import FixtureAdjustedScore, compute_fixture_adjusted_scores
+from fplquant.form.fixtures import (
+    FixtureAdjustedScore,
+    chance_of_playing,
+    compute_fixture_adjusted_scores,
+)
 from fplquant.models.orm import Player
 from fplquant.optimizer.multiperiod import HorizonCandidate
 from fplquant.optimizer.types import DEFENDER, FORWARD, GOALKEEPER, MIDFIELDER, PlayerCandidate
@@ -131,14 +135,15 @@ def build_horizon_candidates_from_db(
 
     projections = project_horizon(session, horizon=horizon, decay=decay)
     events = upcoming_events(session, horizon)
-    statuses = {p.id: p.status for p in session.query(Player).all()}
+    players_by_id = {p.id: p for p in session.query(Player).all()}
 
     kept: list[HorizonProjection] = []
     counts: dict[int, int] = {}
     for projection in projections:  # already sorted by discounted points, best first
         forced = projection.player_id in always_include
         if not forced:
-            if exclude_unavailable and statuses.get(projection.player_id) in UNAVAILABLE_STATUSES:
+            player = players_by_id.get(projection.player_id)
+            if exclude_unavailable and player is not None and player.status in UNAVAILABLE_STATUSES:
                 continue
             limit = pool_per_position.get(projection.element_type, 0)
             if counts.get(projection.element_type, 0) >= limit:
@@ -158,7 +163,17 @@ def build_horizon_candidates_from_db(
                 predicted_points=p.discounted_points,
                 next_opponent=_first_opponent(p),
                 next_opponent_is_home=_first_is_home(p),
-                chance_of_playing=p.usage.p_start,
+                # `p.usage.p_start` is selection odds, not fitness. It used to be
+                # assigned to `chance_of_playing`, which the UI renders as
+                # "N% to play" — so a fully fit Haaland read as "56% to play".
+                # Fitness comes from the same helper the next-match path uses, and
+                # refers to the same fixture `_first_opponent` names.
+                chance_of_playing=(
+                    chance_of_playing(players_by_id[p.player_id])
+                    if p.player_id in players_by_id
+                    else 1.0
+                ),
+                start_probability=p.usage.p_start,
             ),
             points_by_event=p.points_by_event,
         )
