@@ -1,8 +1,10 @@
 import argparse
 import logging
+import sys
 import time
 import urllib.parse
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -169,12 +171,34 @@ def _each(
         logger.warning("%s: %d of %d players failed and were skipped", label, failures, total)
 
 
+@dataclass(frozen=True)
+class InjuryIngestResult:
+    """What a run actually achieved, so a caller can tell it apart from a no-op.
+
+    A blocked scrape and a scrape with nothing left to do exit identically —
+    cleanly, having written nothing. The difference is visible only here:
+    `attempted` players were unresolved going in, and `resolved` of them came
+    out with a verdict. Transfermarkt refusing a datacentre IP returns an empty
+    result set for every query, so it shows up as attempted > 0, resolved == 0.
+    """
+
+    attempted: int  # players that were unresolved when the run started
+    resolved: int  # ...and that the run reached a verdict on
+    matched: int  # players with a Transfermarkt id, after the run
+    injury_records: int  # rows in the injury table, after the run
+
+    @property
+    def looks_blocked(self) -> bool:
+        """True when the run had work to do and completed none of it."""
+        return self.attempted > 0 and self.resolved == 0
+
+
 def run_injury_ingest(
     client: TransfermarktClient | None = None,
     limit: int | None = None,
     delay_seconds: float | None = None,
     retry_unmatched: bool = False,
-) -> None:
+) -> InjuryIngestResult:
     """Resolve Transfermarkt IDs for unresolved players, then sync injury history.
 
     Rate-limited (one request-pair per player, `delay_seconds` apart) to stay
@@ -196,12 +220,24 @@ def run_injury_ingest(
                 cleared = clear_unmatched_cache(session)
                 logger.info("Cleared %d cached 'unmatched' verdicts for retry", cleared)
 
+        attempted = 0
         with session_scope() as session:
             players = session.query(Player).filter_by(transfermarkt_lookup_status="unresolved")
             if limit is not None:
                 players = players.limit(limit)
             unresolved = players.all()
+            attempted = len(unresolved)
             _each(session, unresolved, resolve_transfermarkt_id, client, delay, "Resolved")
+            still_unresolved = (
+                session.query(Player)
+                .filter(
+                    Player.id.in_([p.id for p in unresolved]),
+                    Player.transfermarkt_lookup_status == "unresolved",
+                )
+                .count()
+                if unresolved
+                else 0
+            )
 
         with session_scope() as session:
             matched = session.query(Player).filter_by(transfermarkt_lookup_status="matched").all()
@@ -220,6 +256,15 @@ def run_injury_ingest(
                 client,
                 delay,
                 "Fetched nationality for",
+            )
+        with session_scope() as session:
+            return InjuryIngestResult(
+                attempted=attempted,
+                resolved=attempted - still_unresolved,
+                matched=session.query(Player)
+                .filter_by(transfermarkt_lookup_status="matched")
+                .count(),
+                injury_records=session.query(InjuryRecord).count(),
             )
     finally:
         if owns_client:
@@ -240,10 +285,49 @@ def main() -> None:
         ),
     )
     parser.add_argument("--limit", type=int, default=None, help="Only resolve this many players.")
+    parser.add_argument(
+        "--require-progress",
+        action="store_true",
+        help=(
+            "Exit non-zero if the run had unresolved players and reached a verdict on none "
+            "of them, or if no player is matched at all. That is the signature of "
+            "Transfermarkt blocking the host rather than of a quiet week, and the two are "
+            "otherwise indistinguishable: both exit cleanly having written nothing. Use "
+            "this anywhere nobody reads the log — the scheduled jobs all pass it."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    run_injury_ingest(limit=args.limit, retry_unmatched=args.retry_unmatched)
+    result = run_injury_ingest(limit=args.limit, retry_unmatched=args.retry_unmatched)
+    logger.info(
+        "Injury ingest: attempted=%d resolved=%d matched=%d injury_records=%d",
+        result.attempted,
+        result.resolved,
+        result.matched,
+        result.injury_records,
+    )
+    if not args.require_progress:
+        return
+    # The table being non-empty is not evidence this run did anything — it can
+    # hold a snapshot applied by hand months ago, which is exactly the state
+    # production sat in. Assert the run moved something, not that the data looks
+    # sane. See the note in `resolve_transfermarkt_id` on why blocking is silent.
+    if result.looks_blocked:
+        logger.error(
+            "Resolved 0 of %d unresolved players. Transfermarkt returns an empty result set "
+            "for every query when it blocks a host, and it blocks datacentre IPs — this "
+            "host is almost certainly one. The scrape has to run from a residential "
+            "connection; see DEPLOYMENT.md.",
+            result.attempted,
+        )
+        sys.exit(1)
+    if result.matched == 0:
+        logger.error(
+            "No player is matched to Transfermarkt, so there was nothing to sync and the "
+            "injury layer is running on age and minutes alone."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

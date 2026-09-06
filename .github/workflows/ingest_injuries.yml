@@ -32,7 +32,7 @@ jobs:
         run: uv run fplquant-ingest
 
       - name: Run injury history ingest
-        run: uv run fplquant-ingest-injuries
+        run: uv run fplquant-ingest-injuries --require-progress
 
       # This workflow reported success every week for a month while producing
       # an empty table, because nothing ever asked whether it had. A scrape

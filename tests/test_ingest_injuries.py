@@ -349,3 +349,44 @@ def test_one_players_failure_does_not_discard_the_whole_run(db_session: Session)
     assert statuses["Gamma"] == "matched"
     assert statuses["Delta"] == "matched"
     assert statuses["Rodri"] == "unresolved"
+
+
+def test_a_run_that_resolved_nobody_is_reported_as_blocked() -> None:
+    """Transfermarkt answers every query with an empty result set when it
+    blocks a host, so a blocked scrape and a successful one both exit cleanly
+    having written nothing. The only thing that tells them apart is whether
+    anything moved."""
+    blocked = ingest_injuries.InjuryIngestResult(
+        attempted=623, resolved=0, matched=0, injury_records=0
+    )
+    assert blocked.looks_blocked
+
+
+def test_a_full_table_does_not_hide_a_blocked_run() -> None:
+    """This is the production state exactly: 3267 injury rows applied by hand
+    weeks ago, and a weekly job resolving nobody on top of them. Asserting the
+    table is non-empty passes forever and says nothing about the run — which is
+    why it went a month unnoticed."""
+    stale = ingest_injuries.InjuryIngestResult(
+        attempted=19, resolved=0, matched=573, injury_records=3267
+    )
+    assert stale.looks_blocked
+
+
+def test_a_week_with_nothing_to_resolve_is_not_a_failure() -> None:
+    """Every player already has a verdict, so there is no work and no evidence
+    of blocking. That must stay quiet, or the check cries wolf until it is
+    switched off."""
+    quiet = ingest_injuries.InjuryIngestResult(
+        attempted=0, resolved=0, matched=573, injury_records=3267
+    )
+    assert not quiet.looks_blocked
+
+
+def test_partial_progress_is_progress() -> None:
+    """Some names genuinely have no Transfermarkt entry. One verdict reached is
+    proof the search itself is working."""
+    partial = ingest_injuries.InjuryIngestResult(
+        attempted=19, resolved=1, matched=574, injury_records=3300
+    )
+    assert not partial.looks_blocked
