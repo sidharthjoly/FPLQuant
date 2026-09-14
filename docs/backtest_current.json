@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-09-14T06:57:37+00:00",
+  "commit": "",
+  "season": "26/27",
+  "minutes_model": true,
+  "rounds": [
+    {
+      "round": 1,
+      "players": 610,
+      "cold_start": true,
+      "scores": {
+        "engine": {
+          "mae": 1.6408,
+          "rank_correlation": 0.3692,
+          "realised_top_11": 48.0
+        },
+        "rolling_mean": {
+          "mae": 1.5705,
+          "rank_correlation": 0.1478,
+          "realised_top_11": 18.0
+        }
+      }
+    },
+    {
+      "round": 2,
+      "players": 626,
+      "cold_start": false,
+      "scores": {
+        "engine": {
+          "mae": 1.2767,
+          "rank_correlation": 0.6526,
+          "realised_top_11": 90.0
+        },
+        "rolling_mean": {
+          "mae": 1.4233,
+          "rank_correlation": 0.5711,
+          "realised_top_11": 40.0
+        }
+      }
+    },
+    {
+      "round": 3,
+      "players": 654,
+      "cold_start": false,
+      "scores": {
+        "engine": {
+          "mae": 1.1734,
+          "rank_correlation": 0.688,
+          "realised_top_11": 51.0
+        },
+        "rolling_mean": {
+          "mae": 1.2867,
+          "rank_correlation": 0.651,
+          "realised_top_11": 27.0
+        }
+      }
+    }
+  ],
+  "start_calibration": {
+    "n": 1280,
+    "bins": [
+      {
+        "n": 128,
+        "predicted": 0.0059,
+        "observed": 0.0
+      },
+      {
+        "n": 128,
+        "predicted": 0.0115,
+        "observed": 0.0
+      },
+      {
+        "n": 128,
+        "predicted": 0.017,
+        "observed": 0.0234
+      },
+      {
+        "n": 128,
+        "predicted": 0.0258,
+        "observed": 0.0312
+      },
+      {
+        "n": 128,
+        "predicted": 0.0568,
+        "observed": 0.0938
+      },
+      {
+        "n": 128,
+        "predicted": 0.1601,
+        "observed": 0.1797
+      },
+      {
+        "n": 128,
+        "predicted": 0.4124,
+        "observed": 0.4141
+      },
+      {
+        "n": 128,
+        "predicted": 0.7919,
+        "observed": 0.8281
+      },
+      {
+        "n": 128,
+        "predicted": 0.9254,
+        "observed": 0.8906
+      },
+      {
+        "n": 128,
+        "predicted": 0.9545,
+        "observed": 0.9766
+      }
+    ]
+  },
+  "scored_rounds": [
+    1,
+    2,
+    3
+  ]
+}

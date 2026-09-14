@@ -1,0 +1,132 @@
+name: Score the season in progress
+
+# Replays every complete gameweek of the current season against what actually
+# happened, and stores the result in `docs/backtest_current.json`.
+#
+# Daily rather than weekly, and it does its work only when a gameweek has newly
+# completed. Gameweeks do not land on a weekly cadence — midweek rounds,
+# international breaks, and rescheduled fixtures all move them — so a fixed
+# Tuesday job either fires with nothing to do or sits on a finished midweek
+# round for six days. Checking every day and acting on change is both a closer
+# reading of "after the gameweek is done" and simpler to reason about.
+#
+# 07:00 UTC keeps clear of the 03:00 data ingest and the 05:00 news ingest.
+# This job runs its own `fplquant-ingest` into a throwaway database and does
+# not depend on either — and notably needs no injury data, because the replay
+# deliberately does not reconstruct availability.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      - name: Run ingest
+        run: uv run fplquant-ingest
+
+      # A quiet week and a broken pipeline must not look the same. This job is
+      # designed to do nothing most days, which is exactly the condition under
+      # which a silent failure survives — three separate defects on this project
+      # hid behind green jobs that produced nothing. So: fail loudly if the
+      # ingest wrote no gameweek rows, or if fixtures carry scorelines and yet
+      # no round counts as complete.
+      - name: Check the ingest actually produced something
+        run: |
+          uv run python -c "
+          import sys
+          from fplquant.backtest.current import complete_rounds
+          from fplquant.models.base import session_scope
+          from fplquant.models.orm import Fixture, PlayerGameweekStat
+
+          with session_scope() as session:
+              stats = session.query(PlayerGameweekStat).count()
+              scored = session.query(Fixture).filter(Fixture.team_h_score.isnot(None)).count()
+              rounds = complete_rounds(session)
+          print(f'gameweek rows: {stats}  scored fixtures: {scored}  complete rounds: {rounds}')
+          if stats == 0:
+              sys.exit('The ingest wrote no gameweek rows at all. That is a broken pipeline, '
+                       'not a quiet week.')
+          if scored and not rounds:
+              sys.exit(f'{scored} fixtures carry a scoreline but no round counts as complete. '
+                       'Either every gameweek is genuinely mid-flight, or complete_rounds has '
+                       'stopped agreeing with the fixture table.')
+          "
+
+      # The expensive step is gated on there being something new to say. The
+      # engine commit is part of the comparison as well as the round list: the
+      # same gameweek replayed by a changed engine is a different measurement,
+      # and the stored file is always one coherent version rather than a mix.
+      - name: Decide whether anything is new
+        id: check
+        run: |
+          uv run python -c "
+          import json, os, pathlib
+          from fplquant.backtest.current import complete_rounds
+          from fplquant.models.base import session_scope
+
+          with session_scope() as session:
+              rounds = complete_rounds(session)
+
+          path = pathlib.Path('docs/backtest_current.json')
+          previous = json.loads(path.read_text()) if path.exists() else {}
+          same_rounds = previous.get('scored_rounds') == rounds
+          same_engine = previous.get('commit') == os.environ['GITHUB_SHA']
+          changed = not (same_rounds and same_engine)
+
+          if changed:
+              print(f'Scoring rounds {rounds}.')
+          else:
+              print(f'Nothing new: rounds {rounds} already scored at this commit.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'changed={str(changed).lower()}\n')
+          "
+
+      - name: Replay the season so far
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          uv run fplquant-backtest --current --json > docs/backtest_current.json
+          uv run python -c "
+          import json, sys
+          payload = json.load(open('docs/backtest_current.json'))
+          rounds = payload.get('rounds', [])
+          if not rounds:
+              sys.exit('The replay scored no rounds. Assert on the output having moved, not on '
+                       'the job having exited zero.')
+          for entry in rounds:
+              engine = entry['scores']['engine']
+              tag = ' (cold start)' if entry['cold_start'] else ''
+              print(f\"round {entry['round']}: MAE {engine['mae']:.3f} \"
+                    f\"rank {engine['rank_correlation']:.3f}{tag}\")
+          "
+
+      - name: Commit the result
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/backtest_current.json
+          # [skip ci] because the only change is a results file — running the
+          # full test suite over it would tell nobody anything.
+          git diff --staged --quiet || git commit -m "Score the season in progress [skip ci]"
+          git push
