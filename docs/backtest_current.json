@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-14T06:57:37+00:00",
-  "commit": "",
+  "generated_at": "2026-09-14T07:04:33+00:00",
+  "commit": "14fd00d5f5dbc26e4c8041a38b619d5696c7c0cf",
   "season": "26/27",
   "minutes_model": true,
   "rounds": [
@@ -11,13 +11,13 @@
       "scores": {
         "engine": {
           "mae": 1.6408,
-          "rank_correlation": 0.3692,
+          "rank_correlation": 0.3759,
           "realised_top_11": 48.0
         },
         "rolling_mean": {
           "mae": 1.5705,
-          "rank_correlation": 0.1478,
-          "realised_top_11": 18.0
+          "rank_correlation": -0.0147,
+          "realised_top_11": 41.0
         }
       }
     },
@@ -28,13 +28,13 @@
       "scores": {
         "engine": {
           "mae": 1.2767,
-          "rank_correlation": 0.6526,
+          "rank_correlation": 0.6022,
           "realised_top_11": 90.0
         },
         "rolling_mean": {
           "mae": 1.4233,
-          "rank_correlation": 0.5711,
-          "realised_top_11": 40.0
+          "rank_correlation": 0.604,
+          "realised_top_11": 38.0
         }
       }
     },
@@ -44,13 +44,13 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.1734,
-          "rank_correlation": 0.688,
+          "mae": 1.1735,
+          "rank_correlation": 0.6896,
           "realised_top_11": 51.0
         },
         "rolling_mean": {
           "mae": 1.2867,
-          "rank_correlation": 0.651,
+          "rank_correlation": 0.6301,
           "realised_top_11": 27.0
         }
       }
@@ -91,7 +91,7 @@
       },
       {
         "n": 128,
-        "predicted": 0.4124,
+        "predicted": 0.4121,
         "observed": 0.4141
       },
       {
