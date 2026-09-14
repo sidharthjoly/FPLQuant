@@ -86,7 +86,13 @@ jobs:
       - name: Decide whether anything is new
         id: check
         run: |
-          echo "FPLQUANT_ENGINE_REV=$(git rev-parse HEAD:src)" >> "$GITHUB_ENV"
+          # Exported for this step and written to the environment file for the
+          # later ones: $GITHUB_ENV only takes effect in *subsequent* steps, so
+          # the export is what makes it readable right here.
+          ENGINE_REV="$(git rev-parse HEAD:src)"
+          export FPLQUANT_ENGINE_REV="$ENGINE_REV"
+          echo "FPLQUANT_ENGINE_REV=$ENGINE_REV" >> "$GITHUB_ENV"
+          echo "engine revision: $ENGINE_REV"
           uv run python -c "
           import json, os, pathlib
           from fplquant.backtest.current import complete_rounds
