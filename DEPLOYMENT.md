@@ -258,6 +258,68 @@ its exit code:
 Confirmed working in production: `systemctl is-active cron` → `active`,
 manual run → fetched all 587 players, exit code `0`.
 
+## The injury scrape runs on a laptop, not on the server
+
+Everything else on this page runs on the VM. This one cannot, and the
+distinction matters enough to keep it in its own section: Transfermarkt refuses
+datacentre IPs. Measured 2026-08-31 — 0 of 623 players resolved from the Oracle
+VM, 0 of 623 from a GitHub Actions runner, about 90% from a laptop on a home
+connection. No amount of retrying changes that, and both scheduled jobs above
+that mention injuries fail every week for this reason.
+
+So the scrape happens on a residential connection and the rows travel to the
+machine where it cannot. `scripts/scrape_and_ship_injuries.sh` is both halves as
+one command: scrape, verify the run resolved somebody, export, verify the SQL is
+whole, back up production, ship, apply, verify the counts moved.
+
+That ordering is the point. The export deletes each player's existing rows
+before inserting their replacements, so a truncated file applied over a good
+snapshot is worse than doing nothing — nothing reaches production until the
+export has been proved complete, and every failure says whether production was
+touched.
+
+Run it by hand any time:
+
+```bash
+./scripts/scrape_and_ship_injuries.sh
+```
+
+It takes the better part of an hour: ~600 players at Transfermarkt's ~1.5s per
+request, across three passes.
+
+### Weekly, via launchd
+
+`cron` on macOS silently skips a run whose time passed while the machine was
+asleep, which for a laptop is most of the time. launchd's
+`StartCalendarInterval` fires the job on the next wake instead.
+
+```bash
+cp scripts/com.fplquant.injuries.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.fplquant.injuries.plist
+launchctl list | grep fplquant        # confirm it is registered
+```
+
+Sundays at 10:00 local. Logs to `~/Library/Logs/fplquant-injuries.log` — check
+there after the first scheduled run, because a job that fails in launchd's
+minimal environment fails quietly. To run it once immediately without waiting
+for Sunday:
+
+```bash
+launchctl start com.fplquant.injuries
+```
+
+To stop it:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.fplquant.injuries.plist
+```
+
+**What this does not fix.** The job only runs when the laptop is awake and
+online, so a week away is a week of the data going stale. That is inherent to
+needing a residential IP, not a defect in the job — the alternative is a proxy
+in front of the scrape, which would let the server do it unaided and has not
+been set up.
+
 ## Oracle Always Free: the idle-reclaim gotcha
 
 Oracle reclaims Always Free compute instances that sit idle (CPU, network,

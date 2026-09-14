@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Weekly injury scrape, from a home connection, shipped to production.
+
+  launchd rather than cron: cron on macOS simply misses a run whose time passed
+  while the machine was asleep, and a laptop is asleep most of the time. With
+  StartCalendarInterval, launchd fires the job on the next wake instead — which
+  for a weekly job on a personal machine is the difference between running and
+  not.
+
+  Install (see DEPLOYMENT.md):
+    cp scripts/com.fplquant.injuries.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.fplquant.injuries.plist
+
+  Adjust the paths below if the repo or uv live elsewhere.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fplquant.injuries</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/sidharthjoly/DSI/gym/FPLQuant/scripts/scrape_and_ship_injuries.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sidharthjoly/DSI/gym/FPLQuant</string>
+
+    <!-- launchd hands a job a minimal environment, so uv is not on PATH unless
+         it is put there. The script calls uv by absolute path as well; this is
+         belt and braces for anything uv shells out to. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/sidharthjoly/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Sundays at 10:00 local. The hour matters less than it looks: if the
+         machine is asleep at 10:00, launchd runs the job when it next wakes. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- The scrape is rate-limited to ~1.5s per request over ~600 players, so
+         it legitimately runs for the better part of an hour. Nothing here
+         should kill it for being slow. -->
+    <key>ExitTimeOut</key>
+    <integer>7200</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sidharthjoly/Library/Logs/fplquant-injuries.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sidharthjoly/Library/Logs/fplquant-injuries.log</string>
+</dict>
+</plist>
