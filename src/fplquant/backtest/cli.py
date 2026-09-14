@@ -141,7 +141,11 @@ def _current_payload(
     """
     payload: dict[str, Any] = {
         "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-        "commit": os.environ.get("GITHUB_SHA", ""),
+        # The hash of the `src` tree, not the commit. A results file commits
+        # itself, which moves HEAD — so comparing against the commit would make
+        # every run look like a new engine and the job would never sit still.
+        # The tree hash changes when the engine changes and not otherwise.
+        "engine_rev": os.environ.get("FPLQUANT_ENGINE_REV", ""),
         "season": CURRENT_SEASON,
         "minutes_model": use_minutes_model,
         "rounds": [],

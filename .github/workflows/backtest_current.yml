@@ -74,12 +74,19 @@ jobs:
           "
 
       # The expensive step is gated on there being something new to say. The
-      # engine commit is part of the comparison as well as the round list: the
+      # engine revision is part of the comparison as well as the round list: the
       # same gameweek replayed by a changed engine is a different measurement,
       # and the stored file is always one coherent version rather than a mix.
+      #
+      # That revision is the hash of the `src` tree rather than the commit,
+      # because this job commits its own results file and so moves HEAD every
+      # time it runs. Keyed on the commit, every run would see a new engine,
+      # nothing would ever match, and the no-op path — the whole point of
+      # running daily — would never once be taken.
       - name: Decide whether anything is new
         id: check
         run: |
+          echo "FPLQUANT_ENGINE_REV=$(git rev-parse HEAD:src)" >> "$GITHUB_ENV"
           uv run python -c "
           import json, os, pathlib
           from fplquant.backtest.current import complete_rounds
@@ -91,7 +98,7 @@ jobs:
           path = pathlib.Path('docs/backtest_current.json')
           previous = json.loads(path.read_text()) if path.exists() else {}
           same_rounds = previous.get('scored_rounds') == rounds
-          same_engine = previous.get('commit') == os.environ['GITHUB_SHA']
+          same_engine = previous.get('engine_rev') == os.environ['FPLQUANT_ENGINE_REV']
           changed = not (same_rounds and same_engine)
 
           if changed:
