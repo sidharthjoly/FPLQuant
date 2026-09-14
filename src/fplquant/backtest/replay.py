@@ -100,16 +100,37 @@ class BacktestResult:
         return summary
 
 
+def _midranks(values: np.ndarray) -> np.ndarray:
+    """Ranks, with tied values sharing the average of the ranks they span.
+
+    Ordinal ranking (`argsort(argsort(x))`) breaks ties by position, which makes
+    the result depend on the order rows happen to arrive in. That is not a
+    rounding-level concern here: gameweek points take about seventeen distinct
+    values across six hundred players, and a single round puts more than three
+    hundred of them on nought. Ranking those arbitrarily from 1 to 335 moved the
+    reported correlation by 0.05 between two machines running identical code on
+    identical data — enough to invent a trend, or hide one, in a figure whose
+    whole purpose is to be compared across weeks.
+    """
+    order = np.argsort(values, kind="stable")
+    ordinal = np.empty(len(values), dtype=np.float64)
+    ordinal[order] = np.arange(len(values), dtype=np.float64)
+    _, inverse, counts = np.unique(values, return_inverse=True, return_counts=True)
+    totals = np.zeros(len(counts), dtype=np.float64)
+    np.add.at(totals, inverse, ordinal)
+    return (totals / counts)[inverse]
+
+
 def _rank_correlation(predicted: np.ndarray, actual: np.ndarray) -> float:
-    """Spearman correlation, via Pearson on ranks.
+    """Spearman correlation, via Pearson on midranks.
 
     Written out rather than imported because scipy is not a dependency here and
     ranking two arrays is not worth one.
     """
     if len(predicted) < 3:
         return 0.0
-    pred_ranks = np.argsort(np.argsort(predicted)).astype(np.float64)
-    actual_ranks = np.argsort(np.argsort(actual)).astype(np.float64)
+    pred_ranks = _midranks(predicted)
+    actual_ranks = _midranks(actual)
     if pred_ranks.std() == 0 or actual_ranks.std() == 0:
         return 0.0
     return float(np.corrcoef(pred_ranks, actual_ranks)[0, 1])

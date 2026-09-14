@@ -1,9 +1,17 @@
 import datetime as dt
 
+import numpy as np
+import pytest
 from sqlalchemy.orm import Session
 
 from fplquant.backtest.hydrate import hydrate
-from fplquant.backtest.replay import FPL_XP_METHOD, replay_round, run_backtest
+from fplquant.backtest.replay import (
+    FPL_XP_METHOD,
+    _midranks,
+    _rank_correlation,
+    replay_round,
+    run_backtest,
+)
 from fplquant.engine.rates import (
     _MAX_MULTIPLIER,
     _MIN_MULTIPLIER,
@@ -306,3 +314,44 @@ def test_a_double_gameweek_keeps_both_fixtures(db_session: Session) -> None:
         assert sum(s.minutes for s in stats) == 180
     finally:
         session.close()
+
+
+def test_rank_correlation_does_not_depend_on_row_order() -> None:
+    """Tied outcomes must not be ranked by the order they arrive in.
+
+    Gameweek points take about seventeen distinct values across six hundred
+    players, and a single round puts more than three hundred of them on nought.
+    Ordinal ranking hands those an arbitrary 1..335 based on position, which
+    moved the reported figure by 0.05 between two machines running identical
+    code on identical data.
+    """
+    rng = np.random.default_rng(11)
+    predicted = rng.random(400)
+    # The shape that matters: a handful of distinct values, most rows tied.
+    actual = rng.choice([0.0, 0.0, 0.0, 1.0, 2.0, 6.0], size=400)
+
+    baseline = _rank_correlation(predicted, actual)
+    for _ in range(5):
+        order = rng.permutation(400)
+        assert _rank_correlation(predicted[order], actual[order]) == pytest.approx(baseline)
+
+
+def test_rank_correlation_of_a_constant_prediction_is_zero() -> None:
+    """A vector with no ordering in it cannot correlate with one that has.
+
+    Round 1 of a season is exactly this case: with no earlier gameweek the
+    rolling-mean baseline is zero for every player. Ranking those arbitrarily
+    used to manufacture a correlation of 0.148 out of a column that says
+    nothing whatsoever.
+    """
+    rng = np.random.default_rng(3)
+    actual = rng.choice([0.0, 1.0, 2.0, 9.0], size=200)
+
+    assert _rank_correlation(np.zeros(200), actual) == 0.0
+
+
+def test_midranks_average_the_positions_a_tie_spans() -> None:
+    values = np.array([5.0, 1.0, 1.0, 1.0, 9.0])
+
+    # The three 1.0s occupy positions 0, 1 and 2, so each takes their mean.
+    assert list(_midranks(values)) == [3.0, 1.0, 1.0, 1.0, 4.0]
