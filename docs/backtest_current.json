@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-14T07:04:33+00:00",
-  "commit": "14fd00d5f5dbc26e4c8041a38b619d5696c7c0cf",
+  "generated_at": "2026-09-14T07:15:06+00:00",
+  "commit": "e8605aa8a1de3dbcb0485f049c812592836fcb9a",
   "season": "26/27",
   "minutes_model": true,
   "rounds": [
@@ -11,12 +11,12 @@
       "scores": {
         "engine": {
           "mae": 1.6408,
-          "rank_correlation": 0.3759,
+          "rank_correlation": 0.3704,
           "realised_top_11": 48.0
         },
         "rolling_mean": {
           "mae": 1.5705,
-          "rank_correlation": -0.0147,
+          "rank_correlation": 0.0,
           "realised_top_11": 41.0
         }
       }
@@ -28,12 +28,12 @@
       "scores": {
         "engine": {
           "mae": 1.2767,
-          "rank_correlation": 0.6022,
+          "rank_correlation": 0.6776,
           "realised_top_11": 90.0
         },
         "rolling_mean": {
           "mae": 1.4233,
-          "rank_correlation": 0.604,
+          "rank_correlation": 0.6106,
           "realised_top_11": 38.0
         }
       }
@@ -45,12 +45,12 @@
       "scores": {
         "engine": {
           "mae": 1.1735,
-          "rank_correlation": 0.6896,
+          "rank_correlation": 0.7475,
           "realised_top_11": 51.0
         },
         "rolling_mean": {
           "mae": 1.2867,
-          "rank_correlation": 0.6301,
+          "rank_correlation": 0.6941,
           "realised_top_11": 27.0
         }
       }
