@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-14T07:49:52+00:00",
+  "generated_at": "2026-09-15T12:27:17+00:00",
   "engine_rev": "28ca46998da80d51e157c60bb9060ffaaeaa0508",
   "season": "26/27",
   "minutes_model": true,
@@ -10,8 +10,8 @@
       "cold_start": true,
       "scores": {
         "engine": {
-          "mae": 1.6408,
-          "rank_correlation": 0.3704,
+          "mae": 1.6407,
+          "rank_correlation": 0.3715,
           "realised_top_11": 48.0
         },
         "rolling_mean": {
@@ -28,7 +28,7 @@
       "scores": {
         "engine": {
           "mae": 1.2767,
-          "rank_correlation": 0.6776,
+          "rank_correlation": 0.6774,
           "realised_top_11": 90.0
         },
         "rolling_mean": {
@@ -44,7 +44,7 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.1735,
+          "mae": 1.1733,
           "rank_correlation": 0.7475,
           "realised_top_11": 51.0
         },
@@ -54,66 +54,84 @@
           "realised_top_11": 27.0
         }
       }
+    },
+    {
+      "round": 4,
+      "players": 659,
+      "cold_start": false,
+      "scores": {
+        "engine": {
+          "mae": 1.2801,
+          "rank_correlation": 0.6933,
+          "realised_top_11": 59.0
+        },
+        "rolling_mean": {
+          "mae": 1.2676,
+          "rank_correlation": 0.6725,
+          "realised_top_11": 28.0
+        }
+      }
     }
   ],
   "start_calibration": {
-    "n": 1280,
+    "n": 1939,
     "bins": [
       {
-        "n": 128,
-        "predicted": 0.0059,
+        "n": 194,
+        "predicted": 0.0055,
         "observed": 0.0
       },
       {
-        "n": 128,
-        "predicted": 0.0115,
+        "n": 194,
+        "predicted": 0.0103,
         "observed": 0.0
       },
       {
-        "n": 128,
-        "predicted": 0.017,
-        "observed": 0.0234
+        "n": 195,
+        "predicted": 0.0153,
+        "observed": 0.0103
       },
       {
-        "n": 128,
-        "predicted": 0.0258,
-        "observed": 0.0312
+        "n": 195,
+        "predicted": 0.0247,
+        "observed": 0.041
       },
       {
-        "n": 128,
-        "predicted": 0.0568,
-        "observed": 0.0938
+        "n": 194,
+        "predicted": 0.0566,
+        "observed": 0.0722
       },
       {
-        "n": 128,
-        "predicted": 0.1601,
-        "observed": 0.1797
+        "n": 194,
+        "predicted": 0.1549,
+        "observed": 0.1649
       },
       {
-        "n": 128,
-        "predicted": 0.4121,
-        "observed": 0.4141
+        "n": 194,
+        "predicted": 0.4184,
+        "observed": 0.4433
       },
       {
-        "n": 128,
-        "predicted": 0.7919,
-        "observed": 0.8281
+        "n": 194,
+        "predicted": 0.7782,
+        "observed": 0.8093
       },
       {
-        "n": 128,
-        "predicted": 0.9254,
-        "observed": 0.8906
+        "n": 194,
+        "predicted": 0.92,
+        "observed": 0.8918
       },
       {
-        "n": 128,
-        "predicted": 0.9545,
-        "observed": 0.9766
+        "n": 194,
+        "predicted": 0.9528,
+        "observed": 0.9691
       }
     ]
   },
   "scored_rounds": [
     1,
     2,
-    3
+    3,
+    4
   ]
 }
