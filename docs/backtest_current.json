@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-15T12:27:17+00:00",
-  "engine_rev": "28ca46998da80d51e157c60bb9060ffaaeaa0508",
+  "generated_at": "2026-09-17T12:24:55+00:00",
+  "engine_rev": "819856c26a6e2cb744869219ef8e883ca702530b",
   "season": "26/27",
   "minutes_model": true,
   "rounds": [
@@ -34,7 +34,7 @@
         "rolling_mean": {
           "mae": 1.4233,
           "rank_correlation": 0.6106,
-          "realised_top_11": 38.0
+          "realised_top_11": 40.0
         }
       }
     },
