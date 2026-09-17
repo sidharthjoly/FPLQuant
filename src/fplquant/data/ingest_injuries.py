@@ -250,8 +250,10 @@ def run_injury_ingest(
 
     Rate-limited (one request-pair per player, `delay_seconds` apart) to stay
     polite to Transfermarkt. Given the request volume for a full player pool,
-    this is meant to run far less often than the main FPL ingest — see
-    .github/workflows/ingest_injuries.yml (weekly, not daily).
+    this is meant to run far less often than the main FPL ingest — weekly, from
+    a laptop on a home connection, via scripts/scrape_and_ship_injuries.sh.
+    There is no workflow and no server cron for it: Transfermarkt blocks
+    datacentre IPs, so neither can ever resolve anybody. See DEPLOYMENT.md.
 
     `retry_unmatched` clears the cached "no match" verdicts first, for
     recovering from a run that failed for reasons unrelated to the players.

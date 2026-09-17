@@ -27,13 +27,16 @@ player_matching.py                    — fuzzy name+club matching to FPL player
 ingest_injuries.py                    — caches the match, syncs InjuryRecord rows
 ```
 
-Two scheduled GitHub Actions workflows keep the database fresh:
+Scheduled GitHub Actions workflows keep the database fresh:
 - `.github/workflows/ingest.yml` — daily, pulls prices/points/fixtures from the FPL API
-- `.github/workflows/ingest_injuries.yml` — weekly, resolves + syncs Transfermarkt
-  injury history (lower frequency since it's rate-limited scraping over the full
-  player pool)
+- `.github/workflows/ingest_news.yml` — daily, resolves news feed articles to players
 
 Both upload the resulting SQLite database as a build artifact.
+
+Injury history is the exception and has no workflow at all: Transfermarkt
+refuses datacentre IPs, so it cannot be scraped from a CI runner or from the
+production VM. `scripts/scrape_and_ship_injuries.sh` runs it from a laptop on a
+home connection and ships the rows up — see DEPLOYMENT.md.
 
 ```
 FastAPI app (src/fplquant/api/main.py)

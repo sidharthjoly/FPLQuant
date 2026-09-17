@@ -195,10 +195,9 @@ separate, CI-only DB snapshot (useful for local dev/testing), and it doesn't
 touch the deployed server. **The live server keeps itself fresh via cron**,
 running the same CLI commands directly against the running containers:
 
-`scripts/cron_ingest.sh`, `scripts/cron_ingest_injuries.sh` and
-`scripts/cron_ingest_news.sh` wrap
-`docker compose exec -T api uv run fplquant-ingest[-injuries|-news]` (`-T`
-disables TTY allocation, needed since cron has no terminal). Set up on the VM:
+`scripts/cron_ingest.sh` and `scripts/cron_ingest_news.sh` wrap
+`docker compose exec -T api uv run fplquant-ingest[-news]` (`-T` disables TTY
+allocation, needed since cron has no terminal). Set up on the VM:
 
 ```bash
 cd ~/FPLQuant && git pull   # pick up the scripts if they weren't there at clone time
@@ -220,16 +219,14 @@ crontab -l 2>/dev/null > /tmp/mycron || true
 cat >> /tmp/mycron <<'EOF'
 0 3 * * *   /home/ubuntu/FPLQuant/scripts/cron_ingest.sh >> /home/ubuntu/ingest.log 2>&1
 0 4 * * *   /home/ubuntu/FPLQuant/scripts/cron_ingest_news.sh >> /home/ubuntu/ingest_news.log 2>&1
-0 4 * * 0   /home/ubuntu/FPLQuant/scripts/cron_ingest_injuries.sh >> /home/ubuntu/ingest_injuries.log 2>&1
 EOF
 crontab /tmp/mycron
-crontab -l   # confirm all three lines are there
+crontab -l   # confirm both lines are there
 ```
 
 (Adjust the path if the repo isn't cloned to `/home/ubuntu/FPLQuant`. The
 times match the CI ingest workflows' own cadence — daily FPL data, daily news
-feeds an hour later so the resolver matches against a current player pool, and
-a weekly injury scrape since that's rate-limited scraping over the full pool.)
+feeds an hour later so the resolver matches against a current player pool.)
 
 Unlike the injury scrape, the news ingest **does** work from the VM: it reads
 public RSS feeds rather than a site that blocks datacentre IPs. It exits
@@ -238,15 +235,28 @@ quiet news day are indistinguishable from the outside, and this project has
 already lost a month to a green job writing an empty table. Check
 `~/ingest_news.log` for the per-run counts.
 
-If the injury table is empty, the cron is the first thing to check —
-`crontab -l` and `systemctl is-active cron` — because a cron that never fires
-is indistinguishable from one that fires and finds nothing to do. The
-`Injury ingest (server)` workflow (Actions → Run workflow) runs the scrape on
-the VM on demand over the same SSH path as the deploy, prints the resulting
-row counts, and fails if the table is still empty afterwards. Note the
-`ingest_injuries.yml` workflow does *not* do this — it runs on a CI runner
-against a throwaway database and uploads an artifact, which never reaches the
-live site.
+**There is deliberately no injury line in that crontab**, and no injury
+workflow in Actions. The scrape cannot run on this host at all — see the next
+section — so on 2026-09-17 both workflows and the cron's wrapper script were
+deleted rather than left to fail every week.
+
+A VM set up before that date still has the line in its crontab, and it has to
+go: the next deploy's `git clean -fd` takes `cron_ingest_injuries.sh` away
+underneath it, after which the cron fails on a missing file rather than on a
+blocked scrape.
+
+```bash
+crontab -l > ~/crontab.bak-$(date +%F)          # keep a way back
+crontab -l | grep -v cron_ingest_injuries | crontab -
+crontab -l                                      # two lines, data and news
+```
+
+If the injury data looks stale, the thing to check is the laptop's launchd
+agent, not this crontab.
+
+For the two jobs that *do* run here: a cron that never fires is
+indistinguishable from one that fires and finds nothing to do, so
+`crontab -l` and `systemctl is-active cron` are the first things to check.
 
 Verify before waiting for the schedule — run a script directly and check
 its exit code:
@@ -264,8 +274,12 @@ Everything else on this page runs on the VM. This one cannot, and the
 distinction matters enough to keep it in its own section: Transfermarkt refuses
 datacentre IPs. Measured 2026-08-31 — 0 of 623 players resolved from the Oracle
 VM, 0 of 623 from a GitHub Actions runner, about 90% from a laptop on a home
-connection. No amount of retrying changes that, and both scheduled jobs above
-that mention injuries fail every week for this reason.
+connection. No amount of retrying changes that. Three jobs used to attempt it
+anyway — the VM's weekly `cron_ingest_injuries.sh`, `ingest_injuries.yml` on a
+CI runner, and the on-demand `ingest_injuries_server.yml` — and every one of
+them failed every week from August 2026. Both workflows and the wrapper script
+were deleted on 2026-09-17, and the crontab line goes with them (above): a job
+left scheduled where it cannot succeed is how the next reader concludes it can.
 
 So the scrape happens on a residential connection and the rows travel to the
 machine where it cannot. `scripts/scrape_and_ship_injuries.sh` is both halves as
@@ -295,9 +309,17 @@ asleep, which for a laptop is most of the time. launchd's
 
 ```bash
 cp scripts/com.fplquant.injuries.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.fplquant.injuries.plist
-launchctl list | grep fplquant        # confirm it is registered
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fplquant.injuries.plist
+launchctl print gui/$(id -u)/com.fplquant.injuries
 ```
+
+`launchctl load` is the older spelling of the same thing and still works, but it
+can fail silently; `bootstrap` says so. Either way `print` is the check that
+means something — `launchctl list | grep fplquant` proves only that a label
+exists, while `print` shows the program arguments, the calendar interval, and
+whether the job is `disabled`. A label disabled by an earlier
+`launchctl disable` stays disabled through a fresh `bootstrap` and simply never
+runs; `launchctl enable gui/$(id -u)/com.fplquant.injuries` clears that.
 
 Sundays at 10:00 local. Logs to `~/Library/Logs/fplquant-injuries.log` — check
 there after the first scheduled run, because a job that fails in launchd's
@@ -305,13 +327,16 @@ minimal environment fails quietly. To run it once immediately without waiting
 for Sunday:
 
 ```bash
-launchctl start com.fplquant.injuries
+launchctl kickstart gui/$(id -u)/com.fplquant.injuries
 ```
+
+That is the full hour of scraping followed by a real ship to production, not a
+dry run.
 
 To stop it:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.fplquant.injuries.plist
+launchctl bootout gui/$(id -u)/com.fplquant.injuries
 ```
 
 **What this does not fix.** The job only runs when the laptop is awake and
