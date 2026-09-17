@@ -363,14 +363,38 @@ def test_a_run_that_resolved_nobody_is_reported_as_blocked() -> None:
 
 
 def test_a_full_table_does_not_hide_a_blocked_run() -> None:
-    """This is the production state exactly: 3267 injury rows applied by hand
-    weeks ago, and a weekly job resolving nobody on top of them. Asserting the
-    table is non-empty passes forever and says nothing about the run — which is
-    why it went a month unnoticed."""
+    """The VM's last cron run before it was deleted, to the number: 3267 rows
+    applied by hand weeks earlier, 573 players matched, and a scrape that came
+    back with nothing for any of them. Asserting the table is non-empty passes
+    forever and says nothing about the run — which is why it went a month
+    unnoticed."""
     stale = ingest_injuries.InjuryIngestResult(
-        attempted=19, resolved=0, synced=573, matched=573, injury_records=3267
+        attempted=84, resolved=0, synced=0, matched=573, injury_records=3267
     )
     assert stale.looks_blocked
+
+
+def test_names_the_search_cannot_match_are_not_a_block() -> None:
+    """The players left unresolved are the ones the search cannot match at all:
+    it queries `first_name + second_name`, and `Gabriel Martinelli Silva`
+    returns nothing where `Gabriel Martinelli` returns three. A week whose only
+    candidates are those reaches a verdict on none of them while the sync pass
+    works perfectly — and treating that as a block aborts a good ship."""
+    hard_names_only = ingest_injuries.InjuryIngestResult(
+        attempted=35, resolved=0, synced=402, matched=623, injury_records=3522
+    )
+    assert not hard_names_only.looks_blocked
+
+
+def test_history_that_stops_coming_back_is_a_block_even_when_the_search_works() -> None:
+    """The reverse asymmetry: the resolve pass reaching verdicts does not
+    excuse a sync pass that learned nothing from 575 matched players. Injury
+    history is cumulative, so every one of them coming back empty is the host
+    answering nothing, not a quiet week."""
+    search_works_history_does_not = ingest_injuries.InjuryIngestResult(
+        attempted=19, resolved=2, synced=0, matched=575, injury_records=3300
+    )
+    assert search_works_history_does_not.looks_blocked
 
 
 def test_a_week_with_nothing_to_resolve_is_not_a_failure() -> None:

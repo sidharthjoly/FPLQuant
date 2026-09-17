@@ -14,7 +14,7 @@
 # runs it weekly.
 #
 # The ordering is the safety story. Nothing touches production until the scrape
-# has proved it resolved somebody and the generated SQL has proved it is whole:
+# has proved the host answered it and the generated SQL has proved it is whole:
 # the export deletes each player's existing rows before inserting their new
 # ones, so a truncated file applied over a good snapshot is the one outcome
 # worse than doing nothing at all.
@@ -37,13 +37,17 @@ die() { printf '\nFAILED: %s\n' "$1" >&2; exit 1; }
 
 say "$(date -u '+%Y-%m-%d %H:%M:%S UTC')  scraping from $(hostname)"
 
-# --require-progress exits non-zero when the run reached a verdict on nobody.
-# That is the signature of being blocked, and it is otherwise indistinguishable
-# from a quiet week: both exit cleanly having written nothing.
+# --require-progress exits non-zero when nothing came back at all — no injury
+# history for any matched player. That is the signature of being blocked, and it
+# is otherwise indistinguishable from a quiet week: both exit cleanly having
+# written nothing. It deliberately does not fire on a week that reached no new
+# verdicts; the players still unresolved are the ones the search cannot match by
+# name, so a run that finds none of them is healthy and must not abort the ship.
 "$UV" run fplquant-ingest-injuries --require-progress "$@" \
-    || die "the scrape resolved nobody. If this machine is on a home connection and
-this still happens, Transfermarkt has started blocking it too — check by hand
-before trusting the next run. Production has NOT been touched."
+    || die "the scrape came back empty — no injury history for any matched player.
+If this machine is on a home connection and this still happens, Transfermarkt has
+started blocking it too — check by hand before trusting the next run.
+Production has NOT been touched."
 
 say "exporting"
 "$UV" run python scripts/export_injury_data.py > "$EXPORT" \

@@ -228,16 +228,27 @@ class InjuryIngestResult:
     def looks_blocked(self) -> bool:
         """True when the run had work to do and completed none of it.
 
-        Both passes count, and the sync pass is the one that matters weekly.
-        Once every player is resolved there is nothing left to search, so a
-        check that watched only the resolve pass would fall silent for good
-        the moment a refresh succeeded — which is precisely when it needs to
-        keep working. A pass with nothing to do is not evidence of blocking;
-        a pass with work that returned nothing is.
+        The sync pass is the witness, and the resolve pass only speaks when
+        there is no other evidence. That asymmetry is not a preference between
+        two equal signals: `attempted > 0, resolved == 0` is a perfectly normal
+        healthy outcome, because the players still unresolved are the ones the
+        search cannot match at all. It searches `first_name + second_name`, and
+        `Gabriel Martinelli Silva` returns nothing where `Gabriel Martinelli`
+        returns three; of the 35 outstanding, 27 have a three-word name or
+        non-ASCII characters. A week where the only candidates left are those
+        reaches a verdict on none of them and is not blocked in the slightest.
+
+        The sync pass cannot be fooled that way. Injury history is cumulative,
+        so a matched player's past injuries come back every single week — one
+        of the 623 having nothing to report is ordinary, all of them having
+        nothing means the host answered nothing, which is exactly what
+        Transfermarkt does to an IP it refuses. Hence: judge by the sync pass
+        whenever anything is matched, and fall back to the resolve pass only
+        before the first player has ever matched, where it is all there is.
         """
-        no_verdicts = self.attempted > 0 and self.resolved == 0
-        no_history = self.matched > 0 and self.synced == 0
-        return no_verdicts or no_history
+        if self.matched > 0:
+            return self.synced == 0
+        return self.attempted > 0 and self.resolved == 0
 
 
 def run_injury_ingest(
@@ -342,11 +353,11 @@ def main() -> None:
         "--require-progress",
         action="store_true",
         help=(
-            "Exit non-zero if the run had unresolved players and reached a verdict on none "
-            "of them, or if no player is matched at all. That is the signature of "
-            "Transfermarkt blocking the host rather than of a quiet week, and the two are "
-            "otherwise indistinguishable: both exit cleanly having written nothing. Use "
-            "this anywhere nobody reads the log — the scheduled jobs all pass it."
+            "Exit non-zero when nothing came back: no injury history for any matched "
+            "player, or — before anything has ever matched — no verdict on any unresolved "
+            "one. That is the signature of Transfermarkt blocking the host rather than of "
+            "a quiet week, and the two are otherwise indistinguishable: both exit cleanly "
+            "having written nothing. Use this anywhere nobody reads the log."
         ),
     )
     args = parser.parse_args()
