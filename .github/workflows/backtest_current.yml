@@ -133,12 +133,36 @@ jobs:
                     f\"rank {engine['rank_correlation']:.3f}{tag}\")
           "
 
+      # The squad the optimizer would actually have fielded, which is a
+      # different question from how well it ranks players — see
+      # `backtest/lineups.py`. Its own file: this one runs an integer program
+      # per round per projection path and so has failure modes the scoring
+      # replay does not, and a solver that cannot find a squad must not be
+      # able to leave the scores half-written.
+      - name: Score the lineups it would have picked
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          uv run fplquant-backtest --lineups --json > docs/backtest_lineups.json
+          uv run python -c "
+          import json, sys
+          payload = json.load(open('docs/backtest_lineups.json'))
+          rounds = payload.get('rounds', [])
+          if not rounds:
+              sys.exit('The lineup replay scored no rounds. Assert on the output having '
+                       'moved, not on the job having exited zero.')
+          for entry in rounds:
+              for path, score in sorted(entry['paths'].items()):
+                  print(f\"round {entry['round']} {path}: {score['total']:.0f} points, \"
+                        f\"{score['capture']:.0%} of its ceiling, \"
+                        f\"captaincy cost {score['captain_regret']:.0f}\")
+          "
+
       - name: Commit the result
         if: steps.check.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/backtest_current.json
+          git add docs/backtest_current.json docs/backtest_lineups.json
           # [skip ci] because the only change is a results file — running the
           # full test suite over it would tell nobody anything.
           git diff --staged --quiet || git commit -m "Score the season in progress [skip ci]"

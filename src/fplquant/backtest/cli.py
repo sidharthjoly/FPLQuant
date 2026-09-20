@@ -12,6 +12,13 @@ from fplquant.backtest.current import (
     run_current_backtest,
     start_calibration,
 )
+from fplquant.backtest.lineups import (
+    ENGINE,
+    FORM,
+    CalibrationBand,
+    LineupScore,
+    run_lineup_backtest,
+)
 from fplquant.backtest.replay import (
     DEFAULT_FIRST_ROUND,
     FPL_XP_METHOD,
@@ -67,6 +74,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--lineups",
+        action="store_true",
+        help=(
+            "Score the squad the optimizer would actually have picked, rather than the "
+            "eleven best-ranked players. Runs the real integer program under real budget, "
+            "position and club constraints for every complete round, on both projection "
+            "paths, and reports what the XI and captain returned."
+        ),
+    )
+    parser.add_argument(
         "--no-minutes-model",
         action="store_true",
         help=(
@@ -78,6 +95,16 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if args.lineups:
+        if args.current:
+            parser.error(
+                "--lineups and --current are separate replays: one scores the squad the "
+                "optimizer picks, the other scores the projection it picks from. Run them "
+                "one at a time."
+            )
+        _run_lineups(as_json=args.json)
+        return
 
     if args.current:
         if args.with_minutes_model:
@@ -127,6 +154,115 @@ def main() -> None:
     if engine and baseline:
         verdict = "beats" if engine.rank_correlation > baseline.rank_correlation else "loses to"
         print(f"\n  The engine {verdict} a rolling {ROLLING_WINDOW}-gameweek mean on ranking.")
+
+
+def _lineups_payload(
+    scores: list[LineupScore], bands: list[CalibrationBand], rounds: list[int]
+) -> dict[str, Any]:
+    """The lineup results as data, stamped like the scoring file beside it.
+
+    Its own file rather than a section of `backtest_current.json`, because the
+    two are produced by different code with different ways of failing. A
+    solver that cannot find a squad must not be able to leave the projection
+    scores half-written.
+    """
+    by_round: dict[int, dict[str, Any]] = {}
+    for score in scores:
+        entry = by_round.setdefault(score.round, {"round": score.round, "paths": {}})
+        entry["paths"][score.path] = {
+            "total": round(score.total, 1),
+            "starting_points": round(score.starting_points, 1),
+            "captain": score.captain,
+            "captain_points": round(score.captain_points, 1),
+            "captain_regret": round(score.captain_regret, 1),
+            "bench_points": round(score.bench_points, 1),
+            "best_possible": round(score.best_possible, 1),
+            "capture": round(score.capture, 3),
+            "blanks": score.blanks,
+            "squad_cost": score.squad_cost,
+            "formation": score.formation,
+            "bench_boost_forecast": round(score.bench_boost_forecast, 1),
+            "triple_captain_forecast": round(score.triple_captain_forecast, 1),
+        }
+    return {
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "engine_rev": os.environ.get("FPLQUANT_ENGINE_REV", ""),
+        "season": CURRENT_SEASON,
+        "rounds": [by_round[r] for r in sorted(by_round)],
+        "projection_calibration": {
+            "n": sum(band.n for band in bands),
+            "bands": [
+                {
+                    "low": band.low,
+                    "high": band.high,
+                    "n": band.n,
+                    "predicted": round(band.predicted, 3),
+                    "actual": round(band.actual, 3),
+                    "gap": round(band.gap, 3),
+                }
+                for band in bands
+            ],
+        },
+        "scored_rounds": rounds,
+    }
+
+
+def _run_lineups(as_json: bool = False) -> None:
+    """Score the squads the optimizer would have fielded."""
+    with session_scope() as session:
+        rounds = complete_rounds(session)
+        if not rounds:
+            print("No complete rounds yet. A gameweek is scored once all ten fixtures are in.")
+            return
+        scores, bands = run_lineup_backtest(session, rounds)
+
+    if not scores:
+        print("Nothing scoreable yet.")
+        return
+
+    if as_json:
+        print(json.dumps(_lineups_payload(scores, bands, rounds), indent=2))
+        return
+
+    print(f"\nSquads the optimizer would have picked, rounds {rounds}.")
+    print(
+        f"\n  {'round':<7}{'path':>8}{'XI':>7}{'capt':>7}{'total':>8}"
+        f"{'ceiling':>9}{'capture':>9}{'bench':>7}{'regret':>8}"
+    )
+    for score in scores:
+        print(
+            f"  {score.round:<7}{score.path:>8}{score.starting_points:>7.0f}"
+            f"{score.captain_points:>7.0f}{score.total:>8.0f}{score.best_possible:>9.0f}"
+            f"{score.capture:>8.0%}{score.bench_points:>7.0f}{score.captain_regret:>8.0f}"
+        )
+
+    for path in (ENGINE, FORM):
+        rows = [s for s in scores if s.path == path]
+        if not rows:
+            continue
+        total = sum(s.total for s in rows)
+        ceiling = sum(s.best_possible for s in rows)
+        print(
+            f"\n  {path}: {total:.0f} points over {len(rows)} rounds, "
+            f"{total / ceiling:.0%} of what those squads could have returned. "
+            f"Captaincy cost {sum(s.captain_regret for s in rows):.0f}."
+        )
+
+    print("\n  A fresh squad is bought every round, so this is an infinite-wildcard manager:")
+    print("  comparing the total against FPL's average flatters it. The capture column is the")
+    print("  honest one — it scores the model against its own fifteen.")
+
+    if bands:
+        print("\n  Engine projection against actual, by band of its own ranking:")
+        print(f"    {'rank':>10}{'n':>7}{'predicted':>11}{'actual':>9}{'gap':>8}")
+        for band in bands:
+            print(
+                f"    {f'{band.low}-{band.high}':>10}{band.n:>7}{band.predicted:>11.2f}"
+                f"{band.actual:>9.2f}{band.gap:>+8.2f}"
+            )
+        print("\n    Every band drifting the same way is a global scaling question; the top")
+        print("    band drifting further than the rest is the one that moves captain and chip")
+        print("    decisions. Small n early in a season — watch it, do not fit on it.")
 
 
 def _current_payload(
