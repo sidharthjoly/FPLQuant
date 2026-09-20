@@ -185,3 +185,85 @@ def test_plan_transfers_risk_adjusted_flag_is_accepted(
 
     assert response.status_code == 200
     assert len(response.json()["current_squad"]) == 15
+
+
+def _seed_league_and_pick_a_squad(session: Session) -> list[int]:
+    """A league with fixtures ahead of it, and a legal fifteen to own."""
+    from tests.engine_helpers import make_league, make_round
+
+    teams = make_league(session, teams=8)
+    for event in (1, 2, 3):
+        make_round(session, teams, event)
+    session.commit()
+
+    picked: list[int] = []
+    per_club: dict[int, int] = {}
+    for position, needed in ((GOALKEEPER, 2), (DEFENDER, 5), (MIDFIELDER, 5), (FORWARD, 3)):
+        taken = 0
+        for player in (
+            session.query(Player)
+            .filter(Player.element_type == position)
+            .order_by(Player.fpl_id)
+            .all()
+        ):
+            if taken == needed:
+                break
+            if per_club.get(player.team_id, 0) >= 3:
+                continue
+            per_club[player.team_id] = per_club.get(player.team_id, 0) + 1
+            picked.append(player.fpl_id)
+            taken += 1
+        assert taken == needed, f"only {taken} of {needed} for position {position}"
+    assert len(picked) == 15
+    return picked
+
+
+def test_plan_transfers_searches_the_horizon_and_offers_alternatives(
+    db_session: Session, api_client: TestClient, monkeypatch: Any
+) -> None:
+    """The endpoint answers with ranked lines from the current position, and
+    holding is one of them — a manager is owed the value of doing nothing."""
+    squad_fpl_ids = _seed_league_and_pick_a_squad(db_session)
+    stub = StubFPLClient(
+        bootstrap={"events": [PAST_EVENT]},
+        entry={"name": "My Team"},
+        picks=_picks_payload(squad_fpl_ids),
+    )
+    monkeypatch.setattr(transfers_router, "FPLClient", lambda: stub)
+
+    response = api_client.post(
+        "/transfers/plan", json={"fpl_team_id": 123, "free_transfers": 1, "horizon": 3, "lines": 2}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["horizon_events"] == [1, 2, 3]
+    assert body["lines"]
+    assert any(line["is_hold"] for line in body["lines"])
+    # Ranked best first, on the engine's own evaluation.
+    gains = [line["gain_vs_hold"] for line in body["lines"]]
+    assert gains == sorted(gains, reverse=True)
+    assert body["lines_searched"] >= 2
+
+
+def test_plan_transfers_answers_for_one_week_when_there_is_no_horizon(
+    db_session: Session, api_client: TestClient, monkeypatch: Any
+) -> None:
+    """Preseason, or a database part-way through its first ingest: there is no
+    fixture to search over. That is not a reason to refuse a question the
+    single-gameweek path can still answer."""
+    squad_fpl_ids = _seed_squad(db_session)  # players, no fixtures
+    stub = StubFPLClient(
+        bootstrap={"events": [PAST_EVENT]},
+        entry={"name": "My Team"},
+        picks=_picks_payload(squad_fpl_ids),
+    )
+    monkeypatch.setattr(transfers_router, "FPLClient", lambda: stub)
+
+    response = api_client.post("/transfers/plan", json={"fpl_team_id": 123, "free_transfers": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["horizon_events"] == []
+    assert body["lines"] == []
+    assert body["resulting_squad"]

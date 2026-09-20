@@ -138,7 +138,8 @@ function renderVerdict(result) {
 
   verdictEl.textContent =
     `Recommended: ${result.transfers_made} transfer${result.transfers_made === 1 ? "" : "s"} ` +
-    `${chipNote} — a net gain of +${result.points_gain_after_hit.toFixed(1)} points for the next match.`;
+    `${chipNote} — a net gain of +${result.points_gain_after_hit.toFixed(1)} points ` +
+    `${horizonLabel(result)} against banking the transfer instead.`;
   verdictEl.classList.add("fq-verdict--positive");
 }
 
@@ -229,4 +230,15 @@ function renderCurrentSquad(players) {
 
     currentSquadEl.appendChild(row);
   }
+}
+
+/* The verdict is no longer about the next match. The engine searches the
+ * horizon from your current squad and scores every line against holding, so
+ * the gain is "over these gameweeks, compared with doing nothing" — saying
+ * "for the next match" understated a move whose payoff is three weeks out and
+ * overstated one that only helps this weekend. */
+function horizonLabel(result) {
+  const events = result.horizon_events || [];
+  if (events.length < 2) return "this gameweek";
+  return `over GW${events[0]}-${events[events.length - 1]}`;
 }

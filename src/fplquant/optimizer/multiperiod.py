@@ -32,10 +32,12 @@ objective.
 """
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
 import pulp
 
+from fplquant.optimizer.solution import is_set
 from fplquant.optimizer.starting_xi import select_starting_xi
 from fplquant.optimizer.types import (
     DEFENDER,
@@ -177,6 +179,10 @@ def plan_horizon(
     chips: frozenset[str] = frozenset(),
     bench_weight: float = DEFAULT_BENCH_WEIGHT,
     solver_time_limit: int = 120,
+    max_first_transfers: int | None = None,
+    min_first_transfers: int | None = None,
+    exclude_first_buys: Sequence[frozenset[int]] = (),
+    force_chip_events: Mapping[str, int] | None = None,
 ) -> MultiPeriodPlan:
     """Solve the whole horizon as one integer program.
 
@@ -189,6 +195,29 @@ def plan_horizon(
     single-gameweek model can even ask: a triple captain is worth playing in
     the week your captain has a double gameweek, and knowing which week that is
     requires looking at all of them together.
+
+    The last two arguments exist so a caller can ask for *other* good lines
+    rather than only the best one, the way an engine offers more than one move
+    from a position — see `fplquant.transfers.search`.
+
+    - `max_first_transfers` caps how many players may be bought in the first
+      gameweek. Zero is the hold line: the value of banking the transfer,
+      which is the number every other line has to be judged against.
+    - `min_first_transfers` floors it. One forces a move to be made, which is
+      what asking for the second-best *transfer* is: without it the solver
+      answers every question after the first with "actually, hold", and the
+      alternatives a manager wanted to compare never appear.
+    - `force_chip_events` pins a chip to a gameweek instead of letting the
+      solver choose, which is how "what would this chip be worth in *that*
+      week" gets asked. The chip still has to be in `chips` to be playable at
+      all, and the per-half cap still applies — a second forced play in the
+      same half is infeasible, and should be, rather than being silently
+      dropped.
+    - `exclude_first_buys` forbids lines that buy *every* player in a set
+      already seen. Cutting the exact assignment instead would come back with
+      the same move plus a spare part; requiring that each new line drop at
+      least one previously-suggested signing is what makes the alternatives
+      genuinely alternative.
     """
     if not candidates:
         raise InfeasibleSquadError("No candidate players supplied")
@@ -317,6 +346,30 @@ def plan_horizon(
                 gap = squad[player_id, after] - before[player_id]
                 problem += gap <= 1 - chip_plays[FREE_HIT][event]
                 problem += -gap <= 1 - chip_plays[FREE_HIT][event]
+
+    first_event = events[0]
+    if max_first_transfers is not None:
+        problem += pulp.lpSum(buy[pid, first_event] for pid in ids) <= max_first_transfers
+    if min_first_transfers is not None:
+        problem += pulp.lpSum(buy[pid, first_event] for pid in ids) >= min_first_transfers
+    for chip, event in (force_chip_events or {}).items():
+        if chip not in chips:
+            raise ValueError(f"Cannot force {chip!r} into GW{event}: it is not in `chips`")
+        if event not in chip_plays[chip]:
+            raise ValueError(f"Cannot force {chip!r} into GW{event}: it is outside the horizon")
+        # `>=` rather than `==` so that an impossible request is refused by
+        # the constraint that makes it impossible — the per-half cap, or the
+        # free hit's ban on the final week — rather than by a contradictory
+        # equality that says nothing about which rule was broken.
+        problem += chip_plays[chip][event] >= 1
+    for already_seen in exclude_first_buys:
+        wanted = [pid for pid in already_seen if pid in by_id]
+        if not wanted:
+            # An empty set would read as `0 <= -1` and make the whole program
+            # infeasible. The hold line has no buys to cut on, and it is asked
+            # for by name through `max_first_transfers` rather than excluded.
+            continue
+        problem += pulp.lpSum(buy[pid, first_event] for pid in wanted) <= len(wanted) - 1
 
     solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=solver_time_limit)
     problem.solve(solver)
@@ -533,7 +586,7 @@ def _extract_plan(
     total_hits = 0
 
     for index, event in enumerate(events):
-        picked = [pid for pid in by_id if _is_set(squad[pid, event])]
+        picked = [pid for pid in by_id if is_set(squad[pid, event])]
         # Each gameweek gets its own view of the same players, carrying that
         # week's points, so every existing display path — the starting XI
         # picker, the API schemas, the CLI printer — works on it unchanged.
@@ -551,7 +604,7 @@ def _extract_plan(
             if index == 0
             else int(round(free_balance[events[index - 1]].value() or 0))
         )
-        played = [name for name in sorted(chips) if _is_set(chip_plays[name][event])]
+        played = [name for name in sorted(chips) if is_set(chip_plays[name][event])]
         chip = played[0] if played else None
 
         # The captain scores double as standard; the chips add the third
@@ -573,11 +626,11 @@ def _extract_plan(
                     total_predicted_points=sum(c.predicted_points for c in weekly),
                 ),
                 starting_xi=xi,
-                transfers_in=[weekly_by_id[pid] for pid in picked if _is_set(buy[pid, event])],
+                transfers_in=[weekly_by_id[pid] for pid in picked if is_set(buy[pid, event])],
                 transfers_out=[
                     replace(by_id[pid].candidate, predicted_points=by_id[pid].points(event))
                     for pid in by_id
-                    if _is_set(sell[pid, event])
+                    if is_set(sell[pid, event])
                 ],
                 free_transfers_available=available,
                 hits_taken=hits_taken,
@@ -611,16 +664,6 @@ def _has_legal_squad(
     round into a squad of the wrong size.
     """
     return all(
-        sum(1 for player_id in ids if _is_set(squad[player_id, event])) == constraints.squad_size
+        sum(1 for player_id in ids if is_set(squad[player_id, event])) == constraints.squad_size
         for event in events
     )
-
-
-def _is_set(variable: pulp.LpVariable) -> bool:
-    """Whether a binary came back from the solver as 1.
-
-    CBC returns floats, and a variable the solver considers 1 can come back as
-    0.9999999998, so this compares against a midpoint rather than to 1.
-    """
-    value = variable.value()
-    return value is not None and value > 0.5
