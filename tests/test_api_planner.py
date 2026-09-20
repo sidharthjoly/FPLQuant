@@ -146,15 +146,30 @@ def test_plan_reports_fitness_and_selection_as_separate_fields(
     assert any(player["start_probability"] < 1.0 for player in squad)
 
 
-def test_optimize_does_not_claim_to_model_selection(
+def test_optimize_reports_selection_now_that_it_asks_the_engine(
     db_session: Session, api_client: TestClient
 ) -> None:
-    """`/optimize` is a next-match path and models fitness only. It must leave
-    `start_probability` null rather than defaulting it to 1.0, which would tell
-    a client every player is nailed on to start."""
+    """`/optimize` used to model fitness only, and left `start_probability`
+    null to say so. It now takes the engine's projection for the next event,
+    which models selection, so the field is populated because there is
+    genuinely something to report."""
     _seed(db_session)
 
     body = api_client.post("/optimize", json={"budget": 100.0}).json()
+
+    assert body["squad"]
+    assert all(player["start_probability"] is not None for player in body["squad"])
+
+
+def test_the_form_projection_still_does_not_claim_to_model_selection(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """Null has to keep meaning "not modelled here". Defaulting it to 1.0 on a
+    path that has no opinion would tell a client every player is nailed on to
+    start, which is the failure this has always guarded."""
+    _seed(db_session)
+
+    body = api_client.post("/optimize", json={"budget": 100.0, "projection": "form"}).json()
 
     assert body["squad"]
     assert all(player["start_probability"] is None for player in body["squad"])

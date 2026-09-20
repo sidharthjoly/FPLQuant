@@ -21,10 +21,18 @@ router = APIRouter(tags=["optimizer"])
 logger = logging.getLogger(__name__)
 
 
+# Bumped when a request that hashes the same starts meaning something else.
+# v2: `projection` was added and defaults to the engine, so every v1 entry
+# holds a form-path squad for what is now an engine-path request. Without the
+# bump the first call after a deploy serves the old answer from cache and the
+# change looks like it did nothing.
+_CACHE_VERSION = "v2"
+
+
 def _cache_key(request: schemas.OptimizeRequest) -> str:
     payload = request.model_dump_json()
     digest = hashlib.sha256(payload.encode()).hexdigest()
-    return f"fplquant:optimize:{digest}"
+    return f"fplquant:optimize:{_CACHE_VERSION}:{digest}"
 
 
 @router.post("/optimize", response_model=schemas.OptimizeResponse)
@@ -54,10 +62,13 @@ def optimize(
     )
     if request.risk_adjusted:
         candidates = build_risk_adjusted_candidates_from_db(
-            session, risk_aversion=request.risk_aversion, injury_weight=request.injury_weight
+            session,
+            risk_aversion=request.risk_aversion,
+            injury_weight=request.injury_weight,
+            projection=request.projection,
         )
     else:
-        candidates = build_candidates_from_db(session)
+        candidates = build_candidates_from_db(session, projection=request.projection)
 
     forced_formation: tuple[int, int, int] | None = None
     if request.formation is not None:

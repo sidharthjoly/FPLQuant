@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from fplquant.data.fpl_client import FPLClient
 from fplquant.form.fixtures import compute_fixture_adjusted_scores
 from fplquant.models.orm import Player
+from fplquant.optimizer.candidates import FORM, next_match_points
 from fplquant.optimizer.types import PlayerCandidate
 
 
@@ -44,10 +45,20 @@ def latest_locked_event(events: list[dict[str, Any]]) -> int | None:
 
 
 def fetch_current_squad(
-    client: FPLClient, session: Session, fpl_team_id: int, halflife: float = 3.0
+    client: FPLClient,
+    session: Session,
+    fpl_team_id: int,
+    halflife: float = 3.0,
+    projection: str = FORM,
 ) -> CurrentTeam:
     """Pull `fpl_team_id`'s most recently locked-in squad from FPL's public
     API and translate it into our own fixture-adjusted PlayerCandidates.
+
+    `projection` has to match the one the replacement pool was built with.
+    A squad priced on one scale and compared against a pool priced on another
+    does not fail — it quietly answers "no transfer is worth making", because
+    nothing in the pool can out-score an incumbent whose points were inflated
+    by a different model.
 
     Uses FPL's public, unauthenticated `/entry/{id}/` and
     `/entry/{id}/event/{gw}/picks/` endpoints — the same data the FPL
@@ -81,6 +92,9 @@ def fetch_current_squad(
     fixtures_by_player = {
         s.player_id: s for s in compute_fixture_adjusted_scores(session, halflife)
     }
+    points_by_player, start_probability = next_match_points(
+        session, projection, fixtures_by_player, halflife
+    )
 
     squad: list[PlayerCandidate] = []
     for pick in picks_payload["picks"]:
@@ -96,11 +110,12 @@ def fetch_current_squad(
                 team_short_name=player.team.short_name,
                 element_type=player.element_type,
                 now_cost=player.now_cost,
-                predicted_points=fixture.adjusted_points if fixture else 0.0,
+                predicted_points=points_by_player.get(player.id, 0.0),
                 next_opponent=fixture.opponent_short_name if fixture else None,
                 next_opponent_is_home=fixture.is_home if fixture else None,
                 fixture_difficulty=fixture.difficulty if fixture else None,
                 chance_of_playing=fixture.chance_of_playing if fixture else 1.0,
+                start_probability=start_probability.get(player.id),
             )
         )
 

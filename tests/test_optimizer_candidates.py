@@ -164,3 +164,69 @@ def test_risk_adjusted_candidates_exclude_unavailable_by_default(db_session: Ses
     candidates = build_risk_adjusted_candidates_from_db(db_session)
 
     assert candidates == []
+
+
+def _one_player(session: Session, ep_next: float = 4.0) -> Player:
+    team = _team(session, fpl_id=99)
+    player = Player(
+        fpl_id=99,
+        team_id=team.id,
+        first_name="Some",
+        second_name="Player",
+        web_name="Player",
+        element_type=3,
+        now_cost=60,
+        ep_next=ep_next,
+        status="a",
+    )
+    session.add(player)
+    session.flush()
+    return player
+
+
+def test_an_unknown_projection_is_refused_rather_than_guessed(db_session: Session) -> None:
+    with pytest.raises(ValueError, match="Unknown projection"):
+        build_candidates_from_db(db_session, projection="vibes")
+
+
+def test_the_engine_falls_back_to_form_when_there_is_no_fixture_to_project(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Out of season, or before a fixture list has been ingested, the engine
+    has no gameweek to project. Handing the solver a pool of zeros would turn
+    a quiet week into an unsolvable one, so the form projection answers."""
+    _one_player(db_session)
+    monkeypatch.setattr("fplquant.optimizer.candidates.next_event_points", lambda session: ({}, {}))
+
+    engine = build_candidates_from_db(db_session, projection="engine")
+    form = build_candidates_from_db(db_session, projection="form")
+
+    assert engine
+    assert {c.player_id: c.predicted_points for c in engine} == {
+        c.player_id: c.predicted_points for c in form
+    }
+
+
+def test_only_the_engine_reports_selection_odds(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`start_probability` is "will he be named in the XI", which only the
+    engine models. None means "not modelled here" and must not be confused
+    with a fit player being unlikely to start."""
+    _one_player(db_session)
+    players = db_session.query(Player).all()
+    monkeypatch.setattr(
+        "fplquant.optimizer.candidates.next_event_points",
+        lambda session: (
+            {p.id: 5.0 for p in players},
+            {p.id: 0.75 for p in players},
+        ),
+    )
+
+    engine = build_candidates_from_db(db_session, projection="engine")
+    form = build_candidates_from_db(db_session, projection="form")
+
+    assert engine and form
+    assert all(c.start_probability == 0.75 for c in engine)
+    assert all(c.predicted_points == 5.0 for c in engine)
+    assert all(c.start_probability is None for c in form)

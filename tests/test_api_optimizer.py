@@ -153,3 +153,54 @@ def test_optimize_recovers_from_a_stale_cache_entry(
     # The stale entry should have been overwritten with a valid one.
     refreshed = cache_module.get_client().get(key)
     assert "starting_xi" in refreshed
+
+
+def test_two_projections_do_not_share_a_cache_entry() -> None:
+    """They are different answers to the same question, so they must not be
+    able to be served for one another."""
+    engine = _cache_key(OptimizeRequest(projection="engine"))
+    form = _cache_key(OptimizeRequest(projection="form"))
+    assert engine != form
+
+
+def test_the_cache_key_changed_shape_when_the_default_projection_did() -> None:
+    """Redis outlives a deploy. Entries written before `projection` existed
+    hold form-path squads for what is now an engine-path request, and without
+    a version in the key the first call after the swap serves one back and the
+    change looks like it did nothing."""
+    assert _cache_key(OptimizeRequest()).startswith("fplquant:optimize:v2:")
+
+
+def test_optimize_defaults_to_the_engine_projection(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """The measured default: replaying 26/27, the same solver under the same
+    constraints scored thirteen points a week higher on the engine path."""
+    _seed_full_pool(db_session)
+
+    response = api_client.post("/optimize", json={"budget": 100.0})
+
+    assert response.status_code == 200
+    assert OptimizeRequest().projection == "engine"
+
+
+def test_optimize_still_accepts_the_form_projection(
+    db_session: Session, api_client: TestClient
+) -> None:
+    """Kept so the two can be compared on live data, not for daily use."""
+    _seed_full_pool(db_session)
+
+    response = api_client.post("/optimize", json={"budget": 100.0, "projection": "form"})
+
+    assert response.status_code == 200
+    assert len(response.json()["squad"]) == 15
+
+
+def test_optimize_rejects_a_projection_it_does_not_have(
+    db_session: Session, api_client: TestClient
+) -> None:
+    _seed_full_pool(db_session)
+
+    response = api_client.post("/optimize", json={"budget": 100.0, "projection": "vibes"})
+
+    assert response.status_code == 422

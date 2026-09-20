@@ -25,6 +25,7 @@ def compute_risk_adjusted_scores(
     halflife: float = 3.0,
     risk_aversion: float = 1.0,
     injury_weight: float = 1.0,
+    expected_points: dict[int, float] | None = None,
 ) -> list[RiskAdjustedScore]:
     """Blend expected points, week-to-week volatility, and injury risk into a
     single risk-adjusted expected-points metric — a Sharpe-ratio-style signal:
@@ -46,16 +47,21 @@ def compute_risk_adjusted_scores(
     for everyone, so the volatility term degrades to a neutral 1.0 (no
     penalty) rather than leaving the metric undefined.
 
-    `expected_points` here is already fixture-adjusted (opponent strength,
-    venue, and the chance the player plays their next match — see
+    `expected_points` defaults to the fixture-adjusted EWMA (opponent
+    strength, venue, and the chance the player plays their next match — see
     `fplquant.form.fixtures.compute_fixture_adjusted_scores`), so
     `injury_risk_pct` on top of that is a separate, longer-run signal: how
     injury-prone this player generally is, rather than whether they're
-    literally out for the very next match.
+    literally out for the very next match. A caller may pass its own
+    projection instead, keyed by player id — the risk arithmetic is the same
+    whatever produced the number it is applied to, and the optimizer's engine
+    path does exactly that rather than reimplementing the penalties.
     """
-    expected_points = {
-        s.player_id: s.adjusted_points for s in compute_fixture_adjusted_scores(session, halflife)
-    }
+    if expected_points is None:
+        expected_points = {
+            s.player_id: s.adjusted_points
+            for s in compute_fixture_adjusted_scores(session, halflife)
+        }
     cov_by_player = {
         s.player_id: s.coefficient_of_variation or 0.0
         for s in compute_volatility_scores(session)

@@ -2,6 +2,8 @@ import argparse
 
 from fplquant.models.base import session_scope
 from fplquant.optimizer.candidates import (
+    ENGINE,
+    FORM,
     build_candidates_from_db,
     build_risk_adjusted_candidates_from_db,
 )
@@ -33,6 +35,16 @@ def main() -> None:
         default=1.0,
         help="Only with --risk-adjusted: higher penalizes injury risk more",
     )
+    parser.add_argument(
+        "--projection",
+        choices=(ENGINE, FORM),
+        default=ENGINE,
+        help=(
+            "Which projection to maximize. The engine's structural model by default; "
+            "'form' is the older EWMA, kept for comparison and measurably worse — see "
+            "`fplquant-backtest --lineups`."
+        ),
+    )
     args = parser.parse_args()
 
     constraints = SquadConstraints(budget=round(args.budget * 10), max_per_club=args.max_per_club)
@@ -40,10 +52,13 @@ def main() -> None:
     with session_scope() as session:
         if args.risk_adjusted:
             candidates = build_risk_adjusted_candidates_from_db(
-                session, risk_aversion=args.risk_aversion, injury_weight=args.injury_weight
+                session,
+                risk_aversion=args.risk_aversion,
+                injury_weight=args.injury_weight,
+                projection=args.projection,
             )
         else:
-            candidates = build_candidates_from_db(session)
+            candidates = build_candidates_from_db(session, projection=args.projection)
         squad = optimize_squad(candidates, constraints)
         xi = select_starting_xi(squad.players)
 

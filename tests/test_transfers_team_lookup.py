@@ -147,3 +147,39 @@ def test_fetch_current_squad_falls_back_to_a_default_name(db_session: Session) -
     result = fetch_current_squad(client, db_session, fpl_team_id=42)  # type: ignore[arg-type]
 
     assert result.team_name == "Team 42"
+
+
+def test_the_owned_squad_is_priced_by_the_projection_it_will_be_compared_against(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The squad and the replacement pool have to be on one scale.
+
+    They were not, for the length of one refactor: the pool moved to the
+    engine projection while this still valued owned players on the form EWMA,
+    whose numbers run roughly twice as high. Nothing failed. Every team in the
+    game was simply told that no transfer was worth making, with a gain of
+    exactly 0.00 — four real squads checked, four identical non-answers.
+    """
+    team = _team(db_session)
+    player = _player(db_session, team, fpl_id=11, web_name="Owned")
+
+    monkeypatch.setattr(
+        "fplquant.transfers.team_lookup.next_match_points",
+        lambda session, projection, fixtures, halflife: (
+            ({player.id: 9.0}, {player.id: 0.8}) if projection == "engine" else ({}, {})
+        ),
+    )
+    client = StubFPLClient(
+        bootstrap={"events": [PAST_EVENT]},
+        entry={"name": "Test"},
+        picks={"picks": [{"element": 11}], "entry_history": {"bank": 0}},
+    )
+
+    engine = fetch_current_squad(client, db_session, 1, projection="engine")
+    form = fetch_current_squad(client, db_session, 1, projection="form")
+
+    assert engine.squad[0].predicted_points == 9.0
+    assert engine.squad[0].start_probability == 0.8
+    # The form arm gets whatever that projection says, not the engine's number.
+    assert form.squad[0].predicted_points == 0.0
+    assert form.squad[0].start_probability is None

@@ -293,6 +293,15 @@ class OptimizeRequest(BaseModel):
             "Omit to auto-select the highest-scoring formation."
         ),
     )
+    projection: Literal["engine", "form"] = Field(
+        default="engine",
+        description=(
+            "Which projection to maximize. 'engine' is the structural model — goal rates, "
+            "usage shares, the minutes model — read for the next gameweek. 'form' is an EWMA "
+            "of recent points adjusted for opponent and venue, and is kept for comparison: "
+            "replaying 26/27, the same solver scored thirteen points a week lower on it."
+        ),
+    )
 
     @field_validator("formation")
     @classmethod
@@ -335,6 +344,48 @@ class TransferPlanRequest(BaseModel):
     )
     risk_aversion: float = Field(default=1.0, ge=0, description="Only with risk_adjusted=true")
     injury_weight: float = Field(default=1.0, ge=0, description="Only with risk_adjusted=true")
+    projection: Literal["engine", "form"] = Field(
+        default="engine",
+        description=(
+            "Which projection to maximize. 'engine' is the structural model — goal rates, "
+            "usage shares, the minutes model — read for the next gameweek. 'form' is an EWMA "
+            "of recent points adjusted for opponent and venue, and is kept for comparison: "
+            "replaying 26/27, the same solver scored thirteen points a week lower on it."
+        ),
+    )
+    horizon: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description=(
+            "Gameweeks to search. A transfer is only worth what it earns over the weeks "
+            "you hold the player, and banking one is only worth what it buys next week, "
+            "so a one-week search cannot value either. Set 1 for the old myopic behaviour."
+        ),
+    )
+    lines: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="How many alternative moves to return, best first, alongside holding.",
+    )
+
+
+class TransferLineOut(BaseModel):
+    """One line the engine considered, with what it is worth.
+
+    `gain_vs_hold` is the verdict: this line's evaluation minus the value of
+    banking the transfer instead. `horizon_points` is the raw undiscounted
+    total over the same gameweeks and can rank differently, because later
+    weeks are discounted — only this week's move is executed and the rest is
+    re-solved before it arrives.
+    """
+
+    transfers: list["TransferPairOut"]
+    hit_cost: int
+    gain_vs_hold: float
+    horizon_points: float
+    is_hold: bool
 
 
 class TransferPairOut(BaseModel):
@@ -357,6 +408,13 @@ class TransferPlanResponse(BaseModel):
     worth_it: bool
     resulting_squad: list[SquadPlayerOut]
     starting_xi: StartingXIOut
+    # Empty when a chip is being played: a wildcard or free hit rebuilds the
+    # squad outright rather than choosing between moves, so there are no
+    # alternative lines to rank.
+    horizon_events: list[int] = []
+    lines: list[TransferLineOut] = []
+    lines_searched: int = 0
+    lines_truncated: bool = False
 
 
 class NextDeadlineOut(BaseModel):
