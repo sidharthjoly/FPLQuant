@@ -1,0 +1,198 @@
+{
+  "generated_at": "2026-09-20T02:55:55+00:00",
+  "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
+  "season": "26/27",
+  "rounds": [
+    {
+      "round": 1,
+      "paths": {
+        "engine": {
+          "total": 52.0,
+          "starting_points": 43.0,
+          "captain": "Saka",
+          "captain_points": 9.0,
+          "captain_regret": 2.0,
+          "bench_points": 14.0,
+          "best_possible": 65.0,
+          "capture": 0.8,
+          "blanks": 1,
+          "squad_cost": 1000,
+          "formation": "3-5-2",
+          "bench_boost_forecast": 8.3,
+          "triple_captain_forecast": 3.0
+        },
+        "form": {
+          "total": 5.0,
+          "starting_points": 5.0,
+          "captain": "Perri",
+          "captain_points": 0.0,
+          "captain_regret": 3.0,
+          "bench_points": 2.0,
+          "best_possible": 10.0,
+          "capture": 0.5,
+          "blanks": 8,
+          "squad_cost": 735,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 0.0,
+          "triple_captain_forecast": 0.0
+        }
+      }
+    },
+    {
+      "round": 2,
+      "paths": {
+        "engine": {
+          "total": 70.0,
+          "starting_points": 62.0,
+          "captain": "Isak",
+          "captain_points": 8.0,
+          "captain_regret": 15.0,
+          "bench_points": 15.0,
+          "best_possible": 96.0,
+          "capture": 0.729,
+          "blanks": 1,
+          "squad_cost": 1000,
+          "formation": "3-5-2",
+          "bench_boost_forecast": 14.4,
+          "triple_captain_forecast": 4.9
+        },
+        "form": {
+          "total": 50.0,
+          "starting_points": 49.0,
+          "captain": "Mendy",
+          "captain_points": 1.0,
+          "captain_regret": 9.0,
+          "bench_points": 14.0,
+          "best_possible": 69.0,
+          "capture": 0.725,
+          "blanks": 2,
+          "squad_cost": 835,
+          "formation": "4-5-1",
+          "bench_boost_forecast": 5.1,
+          "triple_captain_forecast": 2.8
+        }
+      }
+    },
+    {
+      "round": 3,
+      "paths": {
+        "engine": {
+          "total": 69.0,
+          "starting_points": 60.0,
+          "captain": "Haaland",
+          "captain_points": 9.0,
+          "captain_regret": 4.0,
+          "bench_points": 15.0,
+          "best_possible": 79.0,
+          "capture": 0.873,
+          "blanks": 0,
+          "squad_cost": 997,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 14.7,
+          "triple_captain_forecast": 7.4
+        },
+        "form": {
+          "total": 64.0,
+          "starting_points": 61.0,
+          "captain": "Cherki",
+          "captain_points": 3.0,
+          "captain_regret": 8.0,
+          "bench_points": 14.0,
+          "best_possible": 79.0,
+          "capture": 0.81,
+          "blanks": 0,
+          "squad_cost": 997,
+          "formation": "3-5-2",
+          "bench_boost_forecast": 6.6,
+          "triple_captain_forecast": 3.7
+        }
+      }
+    },
+    {
+      "round": 4,
+      "paths": {
+        "engine": {
+          "total": 70.0,
+          "starting_points": 61.0,
+          "captain": "Haaland",
+          "captain_points": 9.0,
+          "captain_regret": 3.0,
+          "bench_points": 13.0,
+          "best_possible": 81.0,
+          "capture": 0.864,
+          "blanks": 0,
+          "squad_cost": 999,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 14.7,
+          "triple_captain_forecast": 6.0
+        },
+        "form": {
+          "total": 50.0,
+          "starting_points": 47.0,
+          "captain": "\u00d8degaard",
+          "captain_points": 3.0,
+          "captain_regret": 12.0,
+          "bench_points": 35.0,
+          "best_possible": 93.0,
+          "capture": 0.538,
+          "blanks": 1,
+          "squad_cost": 918,
+          "formation": "5-4-1",
+          "bench_boost_forecast": 9.3,
+          "triple_captain_forecast": 3.3
+        }
+      }
+    }
+  ],
+  "projection_calibration": {
+    "n": 800,
+    "bands": [
+      {
+        "low": 1,
+        "high": 5,
+        "n": 20,
+        "predicted": 4.728,
+        "actual": 7.05,
+        "gap": 2.322
+      },
+      {
+        "low": 6,
+        "high": 10,
+        "n": 20,
+        "predicted": 4.035,
+        "actual": 4.7,
+        "gap": 0.665
+      },
+      {
+        "low": 11,
+        "high": 20,
+        "n": 40,
+        "predicted": 3.692,
+        "actual": 3.25,
+        "gap": -0.442
+      },
+      {
+        "low": 21,
+        "high": 50,
+        "n": 120,
+        "predicted": 3.262,
+        "actual": 4.108,
+        "gap": 0.847
+      },
+      {
+        "low": 51,
+        "high": 200,
+        "n": 600,
+        "predicted": 2.501,
+        "actual": 2.847,
+        "gap": 0.346
+      }
+    ]
+  },
+  "scored_rounds": [
+    1,
+    2,
+    3,
+    4
+  ]
+}

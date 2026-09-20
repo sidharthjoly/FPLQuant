@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-17T12:24:55+00:00",
-  "engine_rev": "819856c26a6e2cb744869219ef8e883ca702530b",
+  "generated_at": "2026-09-20T02:55:52+00:00",
+  "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "minutes_model": true,
   "rounds": [
@@ -10,8 +10,8 @@
       "cold_start": true,
       "scores": {
         "engine": {
-          "mae": 1.6407,
-          "rank_correlation": 0.3715,
+          "mae": 1.6402,
+          "rank_correlation": 0.3716,
           "realised_top_11": 48.0
         },
         "rolling_mean": {
@@ -27,14 +27,14 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.2767,
-          "rank_correlation": 0.6774,
+          "mae": 1.2769,
+          "rank_correlation": 0.6772,
           "realised_top_11": 90.0
         },
         "rolling_mean": {
           "mae": 1.4233,
           "rank_correlation": 0.6106,
-          "realised_top_11": 40.0
+          "realised_top_11": 38.0
         }
       }
     },
@@ -44,7 +44,7 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.1733,
+          "mae": 1.1729,
           "rank_correlation": 0.7475,
           "realised_top_11": 51.0
         },
@@ -61,7 +61,7 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.2801,
+          "mae": 1.2796,
           "rank_correlation": 0.6933,
           "realised_top_11": 59.0
         },
@@ -87,43 +87,43 @@
         "observed": 0.0
       },
       {
-        "n": 195,
+        "n": 194,
         "predicted": 0.0153,
         "observed": 0.0103
       },
       {
-        "n": 195,
+        "n": 194,
         "predicted": 0.0247,
-        "observed": 0.041
+        "observed": 0.0412
       },
       {
         "n": 194,
-        "predicted": 0.0566,
+        "predicted": 0.0567,
         "observed": 0.0722
       },
       {
         "n": 194,
-        "predicted": 0.1549,
+        "predicted": 0.1551,
         "observed": 0.1649
       },
       {
         "n": 194,
-        "predicted": 0.4184,
+        "predicted": 0.4185,
         "observed": 0.4433
       },
       {
         "n": 194,
-        "predicted": 0.7782,
+        "predicted": 0.7781,
         "observed": 0.8093
       },
       {
         "n": 194,
-        "predicted": 0.92,
+        "predicted": 0.9199,
         "observed": 0.8918
       },
       {
         "n": 194,
-        "predicted": 0.9528,
+        "predicted": 0.9527,
         "observed": 0.9691
       }
     ]
