@@ -6,6 +6,7 @@ from fplquant.lineup.formation import (
     compute_team_shapes,
     describe_shape,
 )
+from fplquant.models.orm import Fixture
 from fplquant.optimizer.types import DEFENDER, FORWARD, MIDFIELDER
 from tests.lineup_helpers import DEF, FWD, GKP, MID, make_player, make_stat, make_team
 
@@ -80,3 +81,126 @@ def test_benched_players_do_not_count_toward_the_shape(db_session: Session) -> N
     shape = compute_team_shapes(db_session)[0]
 
     assert shape.slots[DEFENDER] == pytest.approx(3.0, abs=0.3)
+
+
+def _played_fixture(session: Session, home, away, *, fpl_id: int, event: int) -> None:
+    session.add(
+        Fixture(
+            fpl_id=fpl_id,
+            event=event,
+            team_h_id=home.id,
+            team_a_id=away.id,
+            team_h_difficulty=3,
+            team_a_difficulty=3,
+            team_h_score=1,
+            team_a_score=1,
+            finished=True,
+        )
+    )
+    session.flush()
+
+
+def _start_an_xi(
+    session: Session, team, shape: dict[int, int], *, fixture_fpl_id: int, at_home: bool
+) -> None:
+    """A full XI for one club in one match, recorded against that fixture."""
+    fpl_id = team.fpl_id * 100_000 + fixture_fpl_id * 100
+    for position, count in shape.items():
+        for _ in range(count):
+            player = make_player(session, team, fpl_id=fpl_id, element_type=position)
+            fpl_id += 1
+            stat = make_stat(session, player, round_number=1, minutes=90, starts=1)
+            stat.fixture_fpl_id = fixture_fpl_id
+            stat.was_home = at_home
+    session.flush()
+
+
+@pytest.mark.parametrize(
+    ("slots", "expected"),
+    [
+        # Brentford, live: sums to exactly 10.00 and used to print "3-5-1".
+        ({DEFENDER: 3.44, MIDFIELDER: 5.11, FORWARD: 1.44}, "3-5-2"),
+        # Spurs, live: also sums to 10.00, used to print "4-5-2" — twelve men.
+        # The two spare places go to the largest remainders, .78 and .67.
+        ({DEFENDER: 3.78, MIDFIELDER: 4.56, FORWARD: 1.67}, "4-4-2"),
+        # Python rounds half to even, so 2.5 formats as "2" and this read
+        # "2-5-2" — nine players, and the shape that started this hunt.
+        ({DEFENDER: 2.5, MIDFIELDER: 5.4, FORWARD: 2.1}, "3-5-2"),
+        ({DEFENDER: 4.0, MIDFIELDER: 4.0, FORWARD: 2.0}, "4-4-2"),
+    ],
+)
+def test_a_formation_always_fields_ten_outfield_players(
+    slots: dict[int, float], expected: str
+) -> None:
+    """Ten is not a preference, it is how many outfield players a team may put
+    on the pitch. Rounding each position on its own does not preserve it."""
+    label = describe_shape(slots)
+
+    assert label == expected
+    assert sum(int(part) for part in label.split("-")) == 10
+
+
+def test_a_transferred_players_old_matches_stay_with_his_old_club(
+    db_session: Session,
+) -> None:
+    """A player's history follows him through a transfer. Attributing all of it
+    to the club he is at now invented lineups: Man City's shape was partly
+    computed from two fixtures in which exactly one Man City player appeared,
+    which dragged their average XI below seven outfield players."""
+    city = make_team(db_session, 1, "MCI")
+    rovers = make_team(db_session, 2, "ROV")
+    _played_fixture(db_session, city, rovers, fpl_id=500, event=1)
+
+    # A full XI for Rovers in that match...
+    _start_an_xi(
+        db_session, rovers, {GKP: 1, DEF: 3, MID: 5, FWD: 2}, fixture_fpl_id=500, at_home=False
+    )
+    # ...one of whom has since signed for City, and brings his history along.
+    moved = make_player(db_session, city, fpl_id=99, element_type=MID)
+    stat = make_stat(db_session, moved, round_number=1, minutes=90, starts=1)
+    stat.fixture_fpl_id = 500
+    stat.was_home = False
+    db_session.flush()
+
+    shapes = {shape.short_name: shape for shape in compute_team_shapes(db_session)}
+
+    # City never played in that fixture as far as the lineup data is concerned.
+    assert shapes["MCI"].rounds_observed == 0
+    assert shapes["MCI"].slots == DEFAULT_SLOTS
+
+
+def test_a_match_that_is_not_a_full_xi_is_not_evidence_of_a_shape(
+    db_session: Session,
+) -> None:
+    """A gameweek still in progress, or a club whose eleventh starter has left
+    the league, gives a count that is not a lineup. Averaging it in moves the
+    club toward a formation nobody played."""
+    team = make_team(db_session, 1, "ARS")
+    other = make_team(db_session, 2, "ROV")
+    _played_fixture(db_session, team, other, fpl_id=501, event=1)
+    _played_fixture(db_session, team, other, fpl_id=502, event=2)
+
+    _start_an_xi(
+        db_session, team, {GKP: 1, DEF: 3, MID: 5, FWD: 2}, fixture_fpl_id=501, at_home=True
+    )
+    # Half a lineup from the match still being played.
+    _start_an_xi(db_session, team, {GKP: 1, DEF: 2}, fixture_fpl_id=502, at_home=True)
+
+    shape = next(s for s in compute_team_shapes(db_session) if s.short_name == "ARS")
+
+    assert shape.rounds_observed == 1
+
+
+def test_every_clubs_shape_adds_up_to_a_legal_eleven(db_session: Session) -> None:
+    """The invariant behind the label. If the slots themselves do not sum to
+    ten, no amount of careful rounding makes the formation mean anything."""
+    team = make_team(db_session, 1, "ARS")
+    other = make_team(db_session, 2, "ROV")
+    _played_fixture(db_session, team, other, fpl_id=503, event=1)
+    _start_an_xi(
+        db_session, team, {GKP: 1, DEF: 5, MID: 3, FWD: 2}, fixture_fpl_id=503, at_home=True
+    )
+
+    for shape in compute_team_shapes(db_session):
+        outfield = sum(shape.slots[position] for position in (DEFENDER, MIDFIELDER, FORWARD))
+        assert outfield == pytest.approx(10.0)

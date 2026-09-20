@@ -14,6 +14,9 @@ from fplquant.lineup.starts import (
 from fplquant.models.orm import PlayerGameweekStat
 from tests.lineup_helpers import (
     DEF,
+    FWD,
+    GKP,
+    MID,
     SEASON_START,
     make_next_fixture,
     make_player,
@@ -188,15 +191,28 @@ def test_a_recent_shape_change_is_discounted_until_there_is_evidence_for_it(
     home = _fixture_in(db_session, 7)
     away = make_team(db_session, 3, "LIV")
     defenders = [make_player(db_session, home, fpl_id=i, element_type=DEF) for i in range(10, 15)]
+    # The rest of the XI, because a shape is only a shape if eleven people are
+    # in it: dropping a defender has to put somebody else on the pitch. A club
+    # that fields four men and nothing else is not evidence of a formation,
+    # and `lineup.formation` now declines to read one from it.
+    midfielders = [make_player(db_session, home, fpl_id=i, element_type=MID) for i in range(20, 25)]
+    forwards = [make_player(db_session, home, fpl_id=i, element_type=FWD) for i in range(30, 32)]
+    keeper = make_player(db_session, home, fpl_id=40, element_type=GKP)
+
     for round_number in range(1, 11):
         kickoff = SEASON_START - dt.timedelta(days=7 * (11 - round_number))
-        # A back four for eight weeks, then a back three for the last two.
-        starting = defenders[:4] if round_number <= 8 else defenders[:3]
-        for defender in defenders:
-            started = defender in starting
+        back_three = round_number > 8
+        # A back four for eight weeks, then a back three for the last two,
+        # with a midfielder taking the vacated place.
+        starting = set(defenders[:3] if back_three else defenders[:4])
+        starting |= set(midfielders[:5] if back_three else midfielders[:4])
+        starting |= set(forwards)
+        starting.add(keeper)
+        for player in [*defenders, *midfielders, *forwards, keeper]:
+            started = player in starting
             make_stat(
                 db_session,
-                defender,
+                player,
                 round_number=round_number,
                 minutes=90 if started else 0,
                 starts=1 if started else 0,

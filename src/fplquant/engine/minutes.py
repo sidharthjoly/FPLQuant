@@ -91,7 +91,11 @@ class MinutesProfile:
     matches_observed: int
     start_credibility: float  # 0.0 (pure price prior) to 1.0 (pure observed rate)
     observed_start_rate: float
-    prior_start_probability: float  # from price alone, before any evidence
+    # From price alone, before any evidence — the heuristic arm's starting
+    # point, being that player's softmax share of his position group's slots.
+    # Zero when `source == "model"`: that arm consults neither the price prior
+    # nor the club's formation, so there is no such number to report.
+    prior_start_probability: float
     p_start: float
     p_bench_appearance: float
     expected_minutes: float
@@ -293,13 +297,25 @@ def compute_minutes_profiles(
             return chance_of_playing(player)
         return availability.get(player.id, chance_of_playing(player))
 
-    slots_by_team = {
-        shape.team_id: shape.slots for shape in compute_team_shapes(session, players=players)
-    }
     # A trained model replaces the price-and-history blend below when one
     # exists, and is simply absent otherwise — see `ml.minutes_model.load`.
     trained = load() if use_model else None
     model_probabilities = _model_probabilities(session, players, trained) if trained else {}
+
+    # The club's inferred formation, which sets how many starting places a
+    # position group shares out. Only the heuristic arm uses it: the model
+    # arm takes its probabilities from the model and normalises by
+    # redistributing unavailability, not by scaling to a formation, and the
+    # shape is not one of the model's features either. So it is computed only
+    # when something will read it — the same reasoning as the rotation nudge
+    # below, and measured the same way: with a trained model loaded, every one
+    # of 667 players came back with an identical p_start whether the shapes
+    # were right or badly wrong, which is what prompted checking.
+    slots_by_team = (
+        {}
+        if model_probabilities
+        else {shape.team_id: shape.slots for shape in compute_team_shapes(session, players=players)}
+    )
 
     # The rotation nudge from the lineup module: rest days before this specific
     # kickoff, and whether their side has been shifting toward their position.
