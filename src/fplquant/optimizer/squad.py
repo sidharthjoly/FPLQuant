@@ -2,6 +2,7 @@ from collections import defaultdict
 
 import pulp
 
+from fplquant.optimizer.solution import is_set
 from fplquant.optimizer.types import (
     InfeasibleSquadError,
     OptimizedSquad,
@@ -55,7 +56,7 @@ def optimize_squad(
             f"No feasible squad found (solver status: {pulp.LpStatus[problem.status]})"
         )
 
-    selected = [c for c in candidates if pick[c.player_id].value() == 1]
+    selected = [c for c in candidates if is_set(pick[c.player_id])]
     return OptimizedSquad(
         players=selected,
         total_cost=sum(c.now_cost for c in selected),

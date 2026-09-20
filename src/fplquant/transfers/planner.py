@@ -3,6 +3,7 @@ from typing import Literal
 
 import pulp
 
+from fplquant.optimizer.solution import is_set
 from fplquant.optimizer.squad import optimize_squad
 from fplquant.optimizer.starting_xi import select_starting_xi
 from fplquant.optimizer.types import (
@@ -182,7 +183,7 @@ def propose_transfers(
             f"No feasible transfer plan found (solver status: {pulp.LpStatus[problem.status]})"
         )
 
-    resulting_players = [c for c in candidates if pick[c.player_id].value() == 1]
+    resulting_players = [c for c in candidates if is_set(pick[c.player_id])]
     resulting_ids = {c.player_id for c in resulting_players}
     pairs = _pair_transfers(
         [c for c in current_squad if c.player_id not in resulting_ids],
