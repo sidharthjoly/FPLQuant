@@ -21,7 +21,8 @@ Transfermarkt (transfermarkt.com)
 TransfermarktClient (src/fplquant/data/transfermarkt_client.py) — scrapes
         │                                     player search + injury history
         ▼
-player_matching.py                    — fuzzy name+club matching to FPL players
+player_matching.py                    — name ladder + club-corroborated matching
+        │                                     (club name expansion: clubs.py)
         │
         ▼
 ingest_injuries.py                    — caches the match, syncs InjuryRecord rows
@@ -182,11 +183,32 @@ those goals twice. Everything downstream of the horizon follows: the candidate
 pool (`optimizer/candidates.py`), the multi-period program
 (`optimizer/multiperiod.py`), `fplquant-plan` and `/plan`.
 
-The **single-gameweek** transfer planner (`transfers/planner.py`, served at
-`/transfers`) is deliberately *not* affected. It scores the next match only, through
-`form/fixtures.py`, where FPL's published percentage is already the right and
-complete answer. Only the multi-gameweek path has a horizon for this layer to
-say anything about.
+`/transfers` goes further still: as of 2026-09-20 it does not score a single
+swap at all, but searches the horizon from the squad you own and returns
+ranked lines, each scored against banking the transfer
+(`transfers/search.py`). `transfers/planner.py` remains for chip weeks, where
+a wildcard rebuilds rather than chooses, and as the fallback when no fixture
+list is available to search over.
+
+The **single-gameweek** surfaces reach this layer too, as of 2026-09-20, and
+by a different route: `/optimize` and `/transfers` now ask the engine for the
+next event rather than reading `form/fixtures.py` directly
+(`optimizer/candidates.py`, `projection="engine"`). The horizon is where
+availability is projected per gameweek, so consuming its first event brings
+the news layers with it.
+
+That was a deliberate exclusion until it was measured. `fplquant-backtest
+--lineups` replays both projections through the same integer program under the
+same constraints: over GW2-4 of 26/27 the engine path scored 39 points more —
+thirteen a week — and in GW1 the form path collapses outright, projecting near
+zero for everybody and leaving a third of the budget unspent. The form path
+remains available on both endpoints as `projection="form"` so the comparison
+can be run on live data.
+
+What the exclusion was protecting against still holds and is why the gate is
+not applied twice: the EWMA base in `form/fixtures.py` already averages in
+benched weeks, so the selection discount belongs on the engine's projection
+and not on that one.
 
 ### Two sources, and they are not peers
 

@@ -59,9 +59,11 @@ Cloud VM.
   picked, plus rest days and minutes load, combined into a start-probability
   nudge on expected points, and surfaced per player as odds to be named in the
   XI (with the fitness news applied as a hard gate on top).
-- **Transfer planner** — pulls a real FPL team by ID and recommends
-  transfers, accounting for -4 point hits, wildcards, and free hits, and
-  valuing the move on the starting XI rather than on all fifteen.
+- **Transfer planner** — pulls a real FPL team by ID and searches the
+  horizon from the squad you actually own, the way an engine searches from a
+  position: a ranked list of lines, each scored against *banking* the
+  transfer, accounting for -4 hits, wildcards and free hits, and valued on
+  the starting XI rather than on all fifteen.
 - **Player similarity** — per-90 stat vectors, cosine k-NN, and PCA/t-SNE
   projections for finding comparable or cheaper alternatives.
 - **API and dashboard** — FastAPI backend with Redis caching, plus a
@@ -113,7 +115,12 @@ optimizer rebuild the whole squad around last week's highest scorers.
 The lineup signals behave the same way. Inferred formations are shrunk toward a
 4-4-2 prior, start rates toward a positional prior, and the rotation adjustment
 is expressed as a multiplier centred on 1.0 that does nothing at all until
-there is something to say. Early in the season the part that actually carries
+there is something to say. A formation always names ten outfield players,
+which sounds too obvious to state until it isn't: rounding each position on
+its own turned Brentford's 3.44/5.11/1.44 — exactly ten — into "3-5-1", and a
+club's shape is only counted from matches where a whole eleven is on record,
+because a player's history follows him through a transfer and would otherwise
+credit his old fixtures to his new club. Early in the season the part that actually carries
 information is rest days, which come from the fixture calendar rather than from
 match history.
 
@@ -160,6 +167,8 @@ actually cleared the bar, over the real distribution of minutes played.
 | `fplquant-import-history` | Import past FPL seasons from the public archive, for training |
 | `fplquant-train-minutes` | Train and evaluate the learned start-probability model |
 | `fplquant-backtest` | Replay past gameweeks and score the engine against a point-in-time baseline |
+| `fplquant-backtest --lineups` | Score the squad, XI and captain the optimizer would actually have fielded |
+| `fplquant-plan --chip-week` | Rank the gameweeks in the horizon by what a chip is worth in each |
 | `fplquant-api` | Run the FastAPI backend and dashboard |
 
 Injury ingestion is deliberately separate from the main ingest: it scrapes
@@ -612,6 +621,179 @@ tested against. `--with-minutes-model` re-enables it as a diagnostic and says so
 Two limits worth stating: the archive carries no team strength ratings and no
 injury news, so the replay cannot measure the availability gate, and both apply
 equally to the baseline.
+
+### But what would it have *picked*?
+
+`top-11 realised` is an ordering metric wearing a squad's clothes: the eleven
+highest-projected players, with no budget, no positions and no club limit. It
+was standing in for a measurement nobody had made. `fplquant-backtest
+--lineups` makes it — the real integer program, real constraints, the XI and
+captain it would actually have fielded, scored against what happened.
+
+| 26/27, GW1-4 | total | ceiling | capture | captaincy cost |
+| --- | --- | --- | --- | --- |
+| engine projection | **261** | 321 | **81%** | 24 |
+| form projection (what they used to use) | 180 | 268 | 67% | 38 |
+| FPL's average manager | 251 | — | — | — |
+
+**Read `capture`, not `total`.** A fresh fifteen is bought every gameweek
+against a full budget: no transfer limits, no hits, no price rises. That is an
+infinite-wildcard manager, and beating FPL's average by ten points under those
+conditions is not the same as beating it. Pulling the other way, the replay
+does not reconstruct availability — every player looks fit — so the optimizer
+starts people who were ruled out on the Friday. The two biases point in
+opposite directions and cannot be netted, which is why the honest number is
+`capture`: what share of the points its own fifteen could have returned it
+actually took.
+
+Three things fall out of it.
+
+**The projection these endpoints fed their solver was the weaker one**, and
+this measurement is why they no longer do. Same constraints, same solver, same
+weeks — only the numbers going in differ. Over GW2-4 the engine's structural
+projection is worth **39 points more, 13 a week**, and that is before GW1,
+where the form path collapses completely: with no history to average it
+projects near-zero for everybody, spends £70.5m of a £100m budget on players
+it has no opinion about, and returns 10 points with nine of eleven starters
+blanking. `/optimize` and `/transfers` now default to `projection="engine"`,
+which fixes the cold start as a side effect; `projection="form"` still selects
+the old path so the two can be compared on live data.
+
+The difference is not subtle on today's pool. The form path's best-rated
+player projects **13.0 points for a single match** — an EWMA chasing one big
+week — against the engine's 6.5 for Haaland, and it acts on that: asked to
+plan transfers for four real teams, it recommended three to five moves each,
+taking -8 to -16 in hits, and brought in the same handful of recently-hot
+names every time. The engine path recommends one transfer and no hit for the
+same squads.
+
+**Captaincy is the largest single leak.** 24 points over four weeks on the
+engine path, against a total margin over the average of ten — the armband
+costs more than the entire edge. Note that picking the highest projected
+starter is the *correct* rule when the captain's points are simply doubled, so
+this is not an argument for different selection logic. Some regret is
+irreducible and the rest is upstream, in how flat the top of the projection is.
+
+**The top of the ranking is where the projection is least calibrated**, which
+is the same finding from the other side:
+
+| engine's own rank | predicted | actual | gap |
+| --- | --- | --- | --- |
+| 1-5 | 4.73 | 7.05 | **+2.32** |
+| 6-10 | 4.04 | 4.70 | +0.66 |
+| 11-20 | 3.69 | 3.25 | -0.44 |
+| 21-50 | 3.26 | 4.11 | +0.85 |
+| 51-200 | 2.50 | 2.85 | +0.35 |
+
+Every band drifts upward, so part of that is global under-prediction rather
+than a top-end effect; the excess at the top over that drift is nearer +1.5,
+on twenty observations from the opening rounds of a season. That is one good
+week from being noise, and fitting a correction on it would repeat a mistake
+this project has already measured twice — see the note on the current-season
+replay above. It is tracked, per round, in `docs/backtest_lineups.json`, and
+the decision waits for the data.
+
+Chips are not scoreable yet and will not be for months: whether GW2 was the
+right bench-boost week depends on the other thirty-four. What is scoreable is
+whether the valuations behind the decision are honest. Bench boost forecasts
+of 14.4 / 14.7 / 14.7 against 15 / 15 / 13 realised are calibrated well;
+triple captain reads 2-3 points low every week, which is the flat top end
+again. And no week has been worth spending either: the best bench boost
+available returned 15 points and the best triple captain 9, so the planner
+holding both is the right call.
+
+### Transfers as a search, not a swap
+
+A one-gameweek solver cannot tell you to hold. Banking a free transfer is
+worth exactly what it buys you next week, and next week is not in its model —
+so "make no transfers" only ever wins by default, when nothing this week
+clears -4. That is a one-ply search with a myopic evaluation, and it showed:
+asked about three real squads, it disagreed with the horizon planner on all
+three, once taking -8 across three moves where the deeper search took -4 on
+two entirely different ones.
+
+`/transfers/plan` now searches the horizon from the squad you own
+([`src/fplquant/transfers/search.py`](src/fplquant/transfers/search.py)) and
+answers with ranked lines rather than a verdict:
+
+```
+rod me trotter: 4 solves, events [5, 6, 7, 8, 9]
+  1. Palmer->B.Fernandes, João Pedro->Calvert-Lewin   hit 4   vs hold +2.55
+  2. Palmer->B.Fernandes, João Pedro->Wissa           hit 4   vs hold +1.50
+  3. Palmer->B.Fernandes, João Pedro->Barry           hit 4   vs hold +1.47
+  4. hold (bank the transfer)                         hit 0   vs hold +0.00
+```
+
+**Holding is a line, not the absence of one.** It is solved for explicitly
+(`max_first_transfers=0`) and every other line is scored as a difference
+against it, so "worth it" is a comparison of two evaluations rather than an
+assertion. When nothing beats banking, holding comes back at the top of the
+list.
+
+**The alternatives have to be forced.** Ask the solver the same question
+again and it repeats its answer; exclude that answer and it says "hold" to
+everything after. So alternatives are solved with a move required
+(`min_first_transfers=1`) and each must drop at least one player the line
+above it bought. A leg common to every line — B.Fernandes above — is a signal
+rather than a repetition: there is no good line that does not sign him.
+
+**The eval and the raw total can disagree, and both are right.** Lines rank
+on the discounted objective, because only this week's move is executed and
+the rest is re-solved before it arrives, so bringing points forward is
+genuinely worth something. One real squad's best line ranked first on +0.10
+while totalling 232.7 undiscounted against holding's 233.2. The API returns
+both: `gain_vs_hold` is the verdict, `horizon_points` is context.
+
+A chip week still takes the old path — a wildcard or free hit rebuilds the
+squad outright rather than choosing between moves — and so does a request
+with no fixtures ahead of it, where there is no horizon to search.
+
+### Which week should the chip go in?
+
+The planner has always placed chips itself — they are binaries per gameweek
+and it puts each where it is worth most. What it did not do is say what the
+*alternatives* were worth, which is the actual question when you are holding
+one chip for a whole season.
+
+```
+$ uv run fplquant-plan --team-id 500000 --horizon 8 --chip-week wildcard
+
+wildcard · 9 solves · judged over 3-gameweek windows
+
+  week              window     total
+  GW5               +29.78    +31.14
+  GW6               +11.10    +19.88
+  GW7                +5.46    +12.89
+  GW9                +3.14     +4.77
+  GW8                +2.81     +7.31
+  hold the chip      +0.00     +0.00
+```
+
+**The two columns exist because one of them lies.** `total` is the
+whole-horizon difference, and for a wildcard it falls with the week it is
+played in *whatever the fixtures do*: a permanent upgrade in the first week of
+a window improves every week in it, one in the last improves one. Measured
+over eight gameweeks on two real squads it was perfectly monotone — +24.28,
++19.42, +12.27, +6.72, +3.58, +2.76, +1.01, +0.60. Ranking on that would
+answer "now" every single time, to everyone, forever.
+
+`window` compares the same number of gameweeks after each candidate week, so
+every option is judged over the same amount of football. The wildcard still
+declines above, but now for a reason: in the do-nothing baseline the planner
+keeps making ordinary transfers, so by GW9 the squad has largely fixed itself
+and there is little left for a wildcard to add. That is a real answer — *your
+squad needs work now* — rather than an artifact of where the window ends.
+
+The one-week chips behave completely differently, which is the check that the
+window measure is doing something. On the same squad the bench boost reorders
+entirely against the raw total (GW7 best, not GW8) and GW5 is worth exactly
+nothing — there is no time to build a bench worth boosting.
+
+A free hit is never offered in the final week: its cost is the squad reverting
+the week after, which is outside the model, so the planner bans it there
+rather than pricing it at zero. And the whole thing ranks the gameweeks it can
+*see* — a chip you hold all season is a question about the season, so
+"hold the chip" winning means the best week may simply be beyond the horizon.
 
 ### Multi-period planning
 
