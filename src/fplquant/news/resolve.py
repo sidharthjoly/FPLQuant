@@ -47,6 +47,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session, selectinload
 
+from fplquant.data.clubs import CLUB_ALIASES
 from fplquant.models.orm import Player
 from fplquant.utils import normalize_text
 
@@ -95,43 +96,11 @@ NON_PLAYER_PHRASES = frozenset(
     }
 )  # fmt: skip
 
-# How the press writes each club, against how FPL stores it. Without this the
-# club check is far weaker than it looks: FPL's `name` is "Man Utd" and
-# "Nott'm Forest", and a feed saying "Manchester United" corroborates neither.
-#
-# Keyed on FPL's three-letter short name, which is the most stable identifier
-# the payload carries. A club that isn't listed — a promoted side, a future
-# rename — simply falls back to its FPL name and short name, so this degrades
-# to the old behaviour rather than breaking. Bare "City" and "United" are
-# deliberately absent: half the league answers to them.
-CLUB_ALIASES: dict[str, tuple[str, ...]] = {
-    "ARS": ("arsenal", "gunners"),
-    "AVL": ("aston villa", "villa"),
-    "BHA": ("brighton", "brighton and hove albion", "seagulls"),
-    "BOU": ("bournemouth", "afc bournemouth", "cherries"),
-    "BRE": ("brentford", "bees"),
-    "BUR": ("burnley", "clarets"),
-    "CHE": ("chelsea",),
-    "COV": ("coventry", "coventry city", "sky blues"),
-    "CRY": ("crystal palace", "palace", "eagles"),
-    "EVE": ("everton", "toffees"),
-    "FUL": ("fulham", "cottagers"),
-    "HUL": ("hull", "hull city", "tigers"),
-    "IPS": ("ipswich", "ipswich town", "tractor boys"),
-    "LEE": ("leeds", "leeds united"),
-    "LEI": ("leicester", "leicester city", "foxes"),
-    "LIV": ("liverpool",),
-    "MCI": ("man city", "manchester city"),
-    "MUN": ("man utd", "man united", "manchester united", "red devils"),
-    "NEW": ("newcastle", "newcastle united", "magpies"),
-    "NFO": ("nottm forest", "nottingham forest", "forest"),
-    "SHU": ("sheffield united", "blades"),
-    "SOU": ("southampton", "saints"),
-    "SUN": ("sunderland", "black cats"),
-    "TOT": ("spurs", "tottenham", "tottenham hotspur"),
-    "WHU": ("west ham", "west ham united", "hammers"),
-    "WOL": ("wolves", "wolverhampton wanderers"),
-}
+# How the press writes each club, against how FPL stores it, lives in
+# `fplquant.data.clubs` — the Transfermarkt matcher needs the same expansion
+# and there is no sense keeping two tables of it. Without it the club check
+# here is far weaker than it looks: FPL's `name` is "Man Utd" and "Nott'm
+# Forest", and a feed saying "Manchester United" corroborates neither.
 
 
 @dataclass(frozen=True)

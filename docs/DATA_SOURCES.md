@@ -84,9 +84,16 @@
   (`src/fplquant/data/transfermarkt_client.py`), identifying as a standard
   browser and rate-limited (~1.5s/request, configurable via
   `FPLQUANT_TRANSFERMARKT_REQUEST_DELAY_SECONDS`) to stay polite to their
-  servers. Players are matched by fuzzy name + club similarity
-  (`player_matching.py`); ambiguous/unmatched players are skipped rather than
-  guessed at. Intended for personal, non-commercial analytics use — this is
+  servers. Players are searched for under several spellings of their name and
+  matched on name + club (`player_matching.py`, `clubs.py`): the quick search
+  takes its input literally, so a player registered as "Gabriel Martinelli
+  Silva" or "Đorđe Petrović" is found under the form the press writes, with
+  accents folded for the query. Every spelling below the registered one has to
+  be corroborated by the club, whole-word rather than fuzzily — "Man City"
+  scores 0.64 against "Melbourne City FC" on string similarity. Ambiguous and
+  unmatched players are skipped rather than guessed at, and a player whose
+  Transfermarkt entry lists a different club than FPL does stays unresolved
+  and is retried. Intended for personal, non-commercial analytics use — this is
   markup-scraping, not an API contract, so it may need adjustment if
   Transfermarkt changes their page structure.
 - **FBref / StatsBomb open data** — investigated, not pursued. StatsBomb's

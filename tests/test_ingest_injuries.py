@@ -287,9 +287,12 @@ class _WrongPlayerClient:
 class _ExplodingClient:
     """Transfermarkt answering 500 for one particular query.
 
-    Not invented for the test: a squad member is named
-    `Rodrigo 'Rodri' Hernandez Cascante`, and the apostrophe in the search URL
-    really does make the site return an Internal Server Error.
+    Not invented for the test: searching for the squad member named
+    `Rodrigo 'Rodri' Hernandez Cascante` really did return an Internal Server
+    Error. It was blamed on the apostrophe, which measurement since has made
+    doubtful — six players with an apostrophe in their name are matched on
+    exactly that query — so treat the trigger as unexplained rather than
+    understood.
     """
 
     def __init__(self, blows_up_on: str) -> None:
@@ -322,11 +325,13 @@ def test_one_players_failure_does_not_discard_the_whole_run(db_session: Session)
     names = ["Alpha", "Rodri", "Gamma", "Delta"]
     for i, name in enumerate(names):
         db_session.add(
+            # Both name fields, so every rung of the ladder carries the string
+            # the host chokes on — one spelling failing is a different test.
             Player(
                 fpl_id=100 + i,
                 team_id=team.id,
                 first_name=name,
-                second_name="Player",
+                second_name=name,
                 web_name=name,
                 element_type=3,
                 now_cost=50,
@@ -343,7 +348,7 @@ def test_one_players_failure_does_not_discard_the_whole_run(db_session: Session)
 
     statuses = {p.web_name: p.transfermarkt_lookup_status for p in players}
     # Everyone was attempted, not just those before the failure.
-    assert len(client.seen) == 4
+    assert all(any(name in query for query in client.seen) for name in names)
     # The three good ones survived; the failure is left retryable, not cached.
     assert statuses["Alpha"] == "matched"
     assert statuses["Gamma"] == "matched"
@@ -498,3 +503,168 @@ def test_a_pass_that_read_no_history_at_all_is_reported_as_blocked() -> None:
         attempted=0, resolved=0, synced=0, matched=573, injury_records=3267
     )
     assert all_resolved_but_blocked.looks_blocked
+
+
+class _LadderClient:
+    """Answers only the query it is given, the way the real search does."""
+
+    def __init__(self, answers: dict[str, list[TransfermarktSearchResult]]) -> None:
+        self.answers = answers
+        self.queries: list[str] = []
+
+    def search_player(self, query: str) -> list[TransfermarktSearchResult]:
+        import urllib.parse
+
+        text = urllib.parse.unquote(query)
+        self.queries.append(text)
+        return self.answers.get(text, [])
+
+
+def _unresolvable_by_registered_name(session: Session) -> Player:
+    team = Team(fpl_id=40, name="Arsenal", short_name="ARS")
+    session.add(team)
+    session.flush()
+    player = Player(
+        fpl_id=40,
+        team_id=team.id,
+        first_name="Bruno",
+        second_name="Guimarães Rodriguez Moura",
+        web_name="Bruno G.",
+        element_type=3,
+        now_cost=65,
+    )
+    session.add(player)
+    session.flush()
+    return player
+
+
+def test_a_player_the_registered_name_cannot_find_is_found_by_the_press_form(
+    db_session: Session,
+) -> None:
+    """Measured against Transfermarkt: the registered name returns nothing and
+    "Bruno Guimarães" returns nine, one of them at the right club."""
+    player = _unresolvable_by_registered_name(db_session)
+    client = _LadderClient(
+        {
+            "Bruno Guimarães": [
+                TransfermarktSearchResult(
+                    transfermarkt_id=548238,
+                    slug="bruno-guimaraes",
+                    name="Bruno Guimarães",
+                    club_name="Arsenal FC",
+                    position="CM",
+                )
+            ]
+        }
+    )
+
+    assert ingest_injuries.resolve_transfermarkt_id(db_session, client, player) is True
+    assert player.transfermarkt_lookup_status == "matched"
+    assert player.transfermarkt_id == 548238
+    assert client.queries[0] == "Bruno Guimarães Rodriguez Moura"
+
+
+def test_a_fallback_never_takes_a_namesake_from_another_club(db_session: Session) -> None:
+    """The ladder reaches names the player is not registered under, so every
+    rung below the first has to be corroborated by the club. Without that,
+    "Cascante" returns a Costa Rican centre-back at Melbourne City and Rodri
+    is poisoned for good.
+
+    And refusing him is not evidence about Rodri, so it must not be cached.
+    Transfermarkt lists him at Barcelona where FPL has him at Man City; a
+    disagreement a transfer window settles by itself must not retire a player
+    permanently."""
+    team = Team(fpl_id=41, name="Man City", short_name="MCI")
+    db_session.add(team)
+    db_session.flush()
+    player = Player(
+        fpl_id=41,
+        team_id=team.id,
+        first_name="Rodrigo 'Rodri'",
+        second_name="Hernandez Cascante",
+        web_name="Rodrigo",
+        element_type=3,
+        now_cost=65,
+    )
+    db_session.add(player)
+    db_session.flush()
+    client = _LadderClient(
+        {
+            "Cascante": [
+                TransfermarktSearchResult(
+                    transfermarkt_id=1,
+                    slug="julio-cascante",
+                    name="Julio Cascante",
+                    club_name="Melbourne City FC",
+                    position="CB",
+                )
+            ]
+        }
+    )
+
+    assert ingest_injuries.resolve_transfermarkt_id(db_session, client, player) is False
+    assert player.transfermarkt_lookup_status == "unresolved"
+    assert player.transfermarkt_id is None
+
+
+def test_a_blocked_host_is_still_a_blocked_host_with_several_searches(
+    db_session: Session,
+) -> None:
+    """Every rung coming back empty is the signature the ladder must preserve:
+    the player stays unresolved so a later run retries."""
+    player = _unresolvable_by_registered_name(db_session)
+
+    assert ingest_injuries.resolve_transfermarkt_id(db_session, _BlockedClient(), player) is False
+    assert player.transfermarkt_lookup_status == "unresolved"
+
+
+def test_the_registered_name_still_costs_exactly_one_request(db_session: Session) -> None:
+    """Almost every player resolves on the first rung, and the ladder must not
+    turn a 600-player pool into four times the traffic."""
+    player = _team_and_player(db_session)
+    client = StubTransfermarktClient(
+        search_results=[
+            TransfermarktSearchResult(
+                transfermarkt_id=433177,
+                slug="bukayo-saka",
+                name="Bukayo Saka",
+                club_name="Arsenal FC",
+                position="RW",
+            )
+        ],
+        injury_records=[],
+    )
+
+    ingest_injuries.resolve_transfermarkt_id(db_session, client, player)
+
+    assert player.transfermarkt_lookup_status == "matched"
+    assert len(client.search_calls) == 1
+
+
+def test_a_spelling_the_host_rejects_does_not_take_the_player_with_it(
+    db_session: Session,
+) -> None:
+    """A search string Transfermarkt answers 500 to once discarded 425
+    resolved players. A rung that fails is now just a rung that fails."""
+    player = _unresolvable_by_registered_name(db_session)
+    answers = {
+        "Bruno Guimarães": [
+            TransfermarktSearchResult(
+                transfermarkt_id=548238,
+                slug="bruno-guimaraes",
+                name="Bruno Guimarães",
+                club_name="Arsenal FC",
+                position="CM",
+            )
+        ]
+    }
+
+    class _FlakyClient(_LadderClient):
+        def search_player(self, query: str) -> list[TransfermarktSearchResult]:
+            if not self.queries:
+                self.queries.append("(exploded)")
+                raise requests.HTTPError("500 Server Error")
+            return super().search_player(query)
+
+    assert ingest_injuries.resolve_transfermarkt_id(db_session, _FlakyClient(answers), player)
+    assert player.transfermarkt_lookup_status == "matched"

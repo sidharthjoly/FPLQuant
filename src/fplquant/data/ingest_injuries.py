@@ -5,11 +5,13 @@ import time
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
+import requests
 from sqlalchemy.orm import Session
 
 from fplquant.config import settings
-from fplquant.data.player_matching import match_player
+from fplquant.data.player_matching import match_player, search_queries
 from fplquant.data.transfermarkt_client import TransfermarktClient
 from fplquant.models.base import session_scope
 from fplquant.models.orm import InjuryRecord, Player
@@ -17,21 +19,92 @@ from fplquant.models.orm import InjuryRecord, Player
 logger = logging.getLogger(__name__)
 
 
-def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, player: Player) -> bool:
+def resolve_transfermarkt_id(
+    session: Session,
+    client: TransfermarktClient,
+    player: Player,
+    delay_seconds: float = 0.0,
+) -> bool:
     """Search Transfermarkt for `player` and cache the match (or the lack of one).
+
+    Several searches rather than one, in the order `search_queries` returns
+    them, stopping at the first match. Almost every player is found by their
+    registered name and so still costs a single request; the ladder exists for
+    the tail that the quick search cannot match on it, and those are exactly
+    the players who were never going to resolve otherwise.
 
     No-op if already resolved (matched or previously confirmed unmatched) —
     call `resolve_transfermarkt_id` only for players whose
     `transfermarkt_lookup_status == "unresolved"` to avoid needless requests.
 
-    Returns whether a verdict was reached. False means the search told us
+    Returns whether a verdict was reached. False means *every* search told us
     nothing, which across the pool is the signature of a blocked host.
     """
     full_name = f"{player.first_name} {player.second_name}"
-    query = urllib.parse.quote(full_name)
-    candidates = client.search_player(query)
+    queries = search_queries(
+        first_name=player.first_name,
+        second_name=player.second_name,
+        web_name=player.web_name,
+    )
+    # Tracked separately, because they license different things. *Any*
+    # candidate means the host answered, so the run was not blocked. Only a
+    # candidate for the player's own registered name is evidence about the
+    # player, and only that may be cached forever — see below.
+    saw_candidates = False
+    registered_name_answered = False
 
-    if not candidates:
+    for rung, query in enumerate(queries):
+        if rung and delay_seconds:
+            # `_each` paces one player against the next. A ladder makes several
+            # requests inside a single player and has to pace itself.
+            time.sleep(delay_seconds)
+
+        try:
+            candidates = client.search_player(urllib.parse.quote(query.text))
+        except requests.RequestException:
+            # One spelling failing is not the player failing. A search string
+            # Transfermarkt answers 500 to used to take the whole player down
+            # with it; now the ladder moves on, and a player every rung failed
+            # for stays unresolved and is retried, which is what an unanswered
+            # question deserves. (The 500 was long blamed on the apostrophe in
+            # `Rodrigo 'Rodri' Hernandez Cascante`. Measured 2026-09-20, that
+            # is doubtful: six players whose names carry an apostrophe —
+            # O'Riley, O'Shea, O'Brien — are matched today on exactly that
+            # query. Whatever the cause, the recovery is the same.)
+            logger.warning(
+                "Transfermarkt request failed for %r (%s); trying the next spelling",
+                query.text,
+                player.team.short_name,
+                exc_info=True,
+            )
+            continue
+
+        if candidates:
+            saw_candidates = True
+            registered_name_answered = registered_name_answered or rung == 0
+            match = match_player(
+                fpl_full_name=full_name,
+                fpl_web_name=player.web_name,
+                fpl_team_name=player.team.name,
+                fpl_team_short_name=player.team.short_name,
+                candidates=candidates,
+                require_club=query.require_club,
+            )
+            if match is not None:
+                if rung:
+                    logger.info(
+                        "Matched %s (%s) as %r — the registered name found nobody",
+                        full_name,
+                        player.team.short_name,
+                        query.text,
+                    )
+                player.transfermarkt_id = match.transfermarkt_id
+                player.transfermarkt_slug = match.slug
+                player.transfermarkt_lookup_status = "matched"
+                session.flush()
+                return True
+
+    if not saw_candidates:
         # An empty result set is not evidence about this player. Transfermarkt
         # has no public API and does block — a datacentre IP can get an
         # empty-looking page for every query while the same code from a
@@ -45,30 +118,50 @@ def resolve_transfermarkt_id(session: Session, client: TransfermarktClient, play
         # for a database of footballers to be true of, and left the injury
         # model running on age and minutes alone with nothing to indicate it.
         logger.warning(
-            "Transfermarkt returned no candidates at all for %s (%s) — leaving unresolved "
-            "so a later run retries. Repeated across the pool, this means the search is "
-            "being blocked rather than the players being absent.",
+            "Transfermarkt returned no candidates for %s (%s) on any of %d searches — leaving "
+            "unresolved so a later run retries. Repeated across the pool, this means the search "
+            "is being blocked rather than the players being absent.",
             full_name,
             player.team.short_name,
+            len(queries),
         )
         return False
 
-    match = match_player(
-        fpl_full_name=full_name,
-        fpl_web_name=player.web_name,
-        fpl_team_name=player.team.name,
-        candidates=candidates,
+    if not registered_name_answered:
+        # The host answered, but never to the player's own registered name —
+        # only to the approximations further down the ladder. That is not
+        # evidence about this player, it is evidence about other footballers
+        # with overlapping names, and `unmatched` is permanent: nothing ever
+        # looks at those players again.
+        #
+        # This is the ladder's own failure mode and it is not theoretical.
+        # Transfermarkt lists Martinelli at Al-Hilal and Rodri at Barcelona
+        # where FPL has them at Arsenal and Man City. The fallbacks find
+        # somebody each time and the club check correctly refuses all of them,
+        # which under a blanket "candidates came back" rule would retire both
+        # players for good over a disagreement that a transfer window fixes by
+        # itself. So they stay unresolved and are asked again next week.
+        logger.info(
+            "No Transfermarkt match for %s (%s) across %d searches, and the registered name "
+            "returned nobody — leaving unresolved rather than cached, in case the two sources "
+            "stop disagreeing about the club",
+            full_name,
+            player.team.short_name,
+            len(queries),
+        )
+        return False
+
+    # The registered name found candidates and none was close enough. That
+    # *is* evidence about this player, so it is worth caching — and it is
+    # worth more than it used to be, because the ladder has exhausted the
+    # forms the press writes as well as the one FPL registers.
+    player.transfermarkt_lookup_status = "unmatched"
+    logger.info(
+        "No Transfermarkt match for %s (%s) across %d searches",
+        full_name,
+        player.team.short_name,
+        len(queries),
     )
-    if match is None:
-        # Candidates came back and none was close enough. That *is* evidence
-        # about this player, so it is worth caching.
-        player.transfermarkt_lookup_status = "unmatched"
-        logger.info("No Transfermarkt match for %s (%s)", full_name, player.team.short_name)
-        return True
-    player.transfermarkt_id = match.transfermarkt_id
-    player.transfermarkt_slug = match.slug
-    player.transfermarkt_lookup_status = "matched"
-    session.flush()
     return True
 
 
@@ -192,7 +285,7 @@ def _each(
             failures += 1
             logger.warning(
                 "%s failed for %s (%s); skipping",
-                step.__name__,
+                getattr(step, "__name__", label),
                 player.web_name,
                 player.team.short_name,
                 exc_info=True,
@@ -231,12 +324,14 @@ class InjuryIngestResult:
         The sync pass is the witness, and the resolve pass only speaks when
         there is no other evidence. That asymmetry is not a preference between
         two equal signals: `attempted > 0, resolved == 0` is a perfectly normal
-        healthy outcome, because the players still unresolved are the ones the
-        search cannot match at all. It searches `first_name + second_name`, and
-        `Gabriel Martinelli Silva` returns nothing where `Gabriel Martinelli`
-        returns three; of the 35 outstanding, 27 have a three-word name or
-        non-ASCII characters. A week where the only candidates left are those
-        reaches a verdict on none of them and is not blocked in the slightest.
+        healthy outcome, because the players still unresolved are the ones no
+        spelling of their name finds. `search_queries` now tries the press
+        forms as well as the registered one, which resolved several of the
+        pool's long-standing holdouts; what is left over are players whose
+        Transfermarkt entry names a different club than FPL does, and they
+        stay unresolved by design rather than being matched on the name alone.
+        A week whose only candidates are those reaches a verdict on none of
+        them and is not blocked in the slightest.
 
         The sync pass cannot be fooled that way. Injury history is cumulative,
         so a matched player's past injuries come back every single week — one
@@ -288,7 +383,14 @@ def run_injury_ingest(
                 players = players.limit(limit)
             unresolved = players.all()
             attempted = len(unresolved)
-            _each(session, unresolved, resolve_transfermarkt_id, client, delay, "Resolved")
+            _each(
+                session,
+                unresolved,
+                partial(resolve_transfermarkt_id, delay_seconds=delay),
+                client,
+                delay,
+                "Resolved",
+            )
             still_unresolved = (
                 session.query(Player)
                 .filter(
