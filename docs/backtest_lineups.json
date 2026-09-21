@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-20T02:55:55+00:00",
+  "generated_at": "2026-09-21T13:37:27+00:00",
   "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "rounds": [
@@ -142,50 +142,85 @@
           "triple_captain_forecast": 3.3
         }
       }
+    },
+    {
+      "round": 5,
+      "paths": {
+        "engine": {
+          "total": 56.0,
+          "starting_points": 50.0,
+          "captain": "Haaland",
+          "captain_points": 6.0,
+          "captain_regret": 8.0,
+          "bench_points": 16.0,
+          "best_possible": 72.0,
+          "capture": 0.778,
+          "blanks": 0,
+          "squad_cost": 1000,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 15.2,
+          "triple_captain_forecast": 6.7
+        },
+        "form": {
+          "total": 46.0,
+          "starting_points": 45.0,
+          "captain": "Raya",
+          "captain_points": 1.0,
+          "captain_regret": 13.0,
+          "bench_points": 11.0,
+          "best_possible": 67.0,
+          "capture": 0.687,
+          "blanks": 1,
+          "squad_cost": 980,
+          "formation": "4-4-2",
+          "bench_boost_forecast": 11.5,
+          "triple_captain_forecast": 4.1
+        }
+      }
     }
   ],
   "projection_calibration": {
-    "n": 800,
+    "n": 1000,
     "bands": [
       {
         "low": 1,
         "high": 5,
-        "n": 20,
-        "predicted": 4.728,
-        "actual": 7.05,
-        "gap": 2.322
+        "n": 25,
+        "predicted": 4.882,
+        "actual": 6.36,
+        "gap": 1.478
       },
       {
         "low": 6,
         "high": 10,
-        "n": 20,
-        "predicted": 4.035,
-        "actual": 4.7,
-        "gap": 0.665
+        "n": 25,
+        "predicted": 4.161,
+        "actual": 4.2,
+        "gap": 0.039
       },
       {
         "low": 11,
         "high": 20,
-        "n": 40,
-        "predicted": 3.692,
-        "actual": 3.25,
-        "gap": -0.442
+        "n": 50,
+        "predicted": 3.792,
+        "actual": 3.5,
+        "gap": -0.292
       },
       {
         "low": 21,
         "high": 50,
-        "n": 120,
-        "predicted": 3.262,
-        "actual": 4.108,
-        "gap": 0.847
+        "n": 150,
+        "predicted": 3.351,
+        "actual": 4.06,
+        "gap": 0.709
       },
       {
         "low": 51,
         "high": 200,
-        "n": 600,
-        "predicted": 2.501,
-        "actual": 2.847,
-        "gap": 0.346
+        "n": 750,
+        "predicted": 2.542,
+        "actual": 2.997,
+        "gap": 0.455
       }
     ]
   },
@@ -193,6 +228,7 @@
     1,
     2,
     3,
-    4
+    4,
+    5
   ]
 }
