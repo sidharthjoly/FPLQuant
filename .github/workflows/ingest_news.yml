@@ -13,10 +13,10 @@ jobs:
   ingest-news:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           version: "0.12.1"
@@ -55,7 +55,7 @@ jobs:
           "
 
       - name: Upload database snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fplquant-db-news-${{ github.run_id }}
           path: data/fplquant.db
