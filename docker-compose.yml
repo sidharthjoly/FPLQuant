@@ -1,16 +1,24 @@
 services:
   redis:
     image: redis:7-alpine
+    # Loopback only. A port Docker publishes goes through Docker's own iptables
+    # chains, not the host's INPUT rules, so a bare "6379:6379" listens on every
+    # interface whatever the host firewall says — and this Redis has no
+    # password. The API reaches it over the compose network as `redis:6379`;
+    # the host mapping exists only so local tools can poke at it.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
 
   api:
     image: ghcr.io/sidharthjoly/fplquant:latest
     build: .
+    # Loopback only, for the same reason as Redis above. On the server Caddy
+    # runs on the host and proxies localhost:8000, so public traffic arrives
+    # over HTTPS on 443 and nothing outside the machine needs 8000 at all.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       FPLQUANT_REDIS_URL: redis://redis:6379/0
       FPLQUANT_DATABASE_URL: sqlite:////app/data/fplquant.db
