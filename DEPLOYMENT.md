@@ -133,11 +133,22 @@ If the VM's IP ever changes (instance recreated, etc.), update the IP on
 the DuckDNS subdomain's page — the hostname itself doesn't need to change,
 so `frontend/config.js` and any bookmarks stay valid.
 
-**Optional hardening, once Caddy is confirmed working:** port 8000 was
-opened directly for testing before Caddy was in place. It can be closed
-again in the Security List/NSG/iptables (reversing the ingress rules added
-for it) since all real traffic now goes through Caddy on 443 — nothing
-outside the VM needs to reach 8000 directly anymore.
+**Ports 8000 and 6379 are bound to loopback.** `docker-compose.yml` publishes
+both as `127.0.0.1:…`, not bare `8000:8000` / `6379:6379`. A port Docker
+publishes is routed through Docker's own iptables chains and never meets the
+host's INPUT rules, so the OCI image's `REJECT` rule above does not cover it:
+a bare mapping listens on every interface, and until 2026-10 the API answered
+plain HTTP on `http://fplquant.duckdns.org:8000` from anywhere. Caddy on the
+host proxies `localhost:8000`, so it is unaffected. Check on the VM after a
+deploy:
+
+```bash
+sudo ss -tlnp | grep -E ':(8000|6379)\b'   # both should show 127.0.0.1, not 0.0.0.0 or [::]
+```
+
+Port 8000 was also opened in the Security List/NSG for testing before Caddy
+was in place. That ingress rule is now dead weight and should be removed —
+all real traffic goes through Caddy on 443.
 
 ## 4. Point the frontend at it
 
