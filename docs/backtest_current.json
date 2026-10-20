@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-13T14:47:48+00:00",
+  "generated_at": "2026-10-20T12:31:42+00:00",
   "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "minutes_model": true,
@@ -10,8 +10,8 @@
       "cold_start": true,
       "scores": {
         "engine": {
-          "mae": 1.6378,
-          "rank_correlation": 0.381,
+          "mae": 1.6372,
+          "rank_correlation": 0.3809,
           "realised_top_11": 48.0
         },
         "rolling_mean": {
@@ -28,13 +28,13 @@
       "scores": {
         "engine": {
           "mae": 1.2706,
-          "rank_correlation": 0.6797,
+          "rank_correlation": 0.6796,
           "realised_top_11": 90.0
         },
         "rolling_mean": {
           "mae": 1.4233,
           "rank_correlation": 0.6106,
-          "realised_top_11": 38.0
+          "realised_top_11": 40.0
         }
       }
     },
@@ -44,7 +44,7 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.1731,
+          "mae": 1.173,
           "rank_correlation": 0.7477,
           "realised_top_11": 53.0
         },
@@ -61,8 +61,8 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.2755,
-          "rank_correlation": 0.6963,
+          "mae": 1.2753,
+          "rank_correlation": 0.6964,
           "realised_top_11": 53.0
         },
         "rolling_mean": {
@@ -78,14 +78,14 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.2153,
-          "rank_correlation": 0.7269,
+          "mae": 1.2152,
+          "rank_correlation": 0.7268,
           "realised_top_11": 34.0
         },
         "rolling_mean": {
           "mae": 1.1922,
           "rank_correlation": 0.7108,
-          "realised_top_11": 63.0
+          "realised_top_11": 57.0
         }
       }
     },
@@ -95,70 +95,87 @@
       "cold_start": false,
       "scores": {
         "engine": {
-          "mae": 1.1918,
-          "rank_correlation": 0.6858,
+          "mae": 1.1915,
+          "rank_correlation": 0.6857,
           "realised_top_11": 37.0
         },
         "rolling_mean": {
           "mae": 1.2279,
           "rank_correlation": 0.6743,
+          "realised_top_11": 39.0
+        }
+      }
+    },
+    {
+      "round": 7,
+      "players": 668,
+      "cold_start": false,
+      "scores": {
+        "engine": {
+          "mae": 1.201,
+          "rank_correlation": 0.6786,
+          "realised_top_11": 44.0
+        },
+        "rolling_mean": {
+          "mae": 1.2707,
+          "rank_correlation": 0.6293,
           "realised_top_11": 35.0
         }
       }
     }
   ],
   "start_calibration": {
-    "n": 3273,
+    "n": 3941,
     "bins": [
       {
-        "n": 328,
-        "predicted": 0.0048,
-        "observed": 0.003
-      },
-      {
-        "n": 327,
-        "predicted": 0.0083,
+        "n": 395,
+        "predicted": 0.0042,
         "observed": 0.0
       },
       {
-        "n": 327,
-        "predicted": 0.013,
-        "observed": 0.0092
+        "n": 395,
+        "predicted": 0.0074,
+        "observed": 0.0025
       },
       {
-        "n": 327,
-        "predicted": 0.0236,
-        "observed": 0.0336
+        "n": 395,
+        "predicted": 0.0123,
+        "observed": 0.0076
       },
       {
-        "n": 328,
-        "predicted": 0.0584,
-        "observed": 0.0762
+        "n": 394,
+        "predicted": 0.0233,
+        "observed": 0.0406
       },
       {
-        "n": 328,
-        "predicted": 0.1576,
-        "observed": 0.1524
+        "n": 395,
+        "predicted": 0.0594,
+        "observed": 0.0785
       },
       {
-        "n": 327,
-        "predicted": 0.4118,
-        "observed": 0.4343
+        "n": 395,
+        "predicted": 0.1587,
+        "observed": 0.157
       },
       {
-        "n": 327,
-        "predicted": 0.7575,
-        "observed": 0.8196
+        "n": 394,
+        "predicted": 0.4145,
+        "observed": 0.4137
       },
       {
-        "n": 327,
-        "predicted": 0.9028,
-        "observed": 0.8716
+        "n": 394,
+        "predicted": 0.7534,
+        "observed": 0.8198
       },
       {
-        "n": 328,
-        "predicted": 0.9494,
-        "observed": 0.9604
+        "n": 395,
+        "predicted": 0.8988,
+        "observed": 0.8734
+      },
+      {
+        "n": 395,
+        "predicted": 0.9488,
+        "observed": 0.957
       }
     ]
   },
@@ -168,6 +185,7 @@
     3,
     4,
     5,
-    6
+    6,
+    7
   ]
 }
