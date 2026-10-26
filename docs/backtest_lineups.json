@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-20T12:31:49+00:00",
+  "generated_at": "2026-10-26T13:51:27+00:00",
   "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "rounds": [
@@ -22,16 +22,16 @@
           "triple_captain_forecast": 3.0
         },
         "form": {
-          "total": 18.0,
-          "starting_points": 18.0,
-          "captain": "Penders",
+          "total": 7.0,
+          "starting_points": 7.0,
+          "captain": "Suzuki",
           "captain_points": 0.0,
-          "captain_regret": 9.0,
+          "captain_regret": 2.0,
           "bench_points": 1.0,
-          "best_possible": 28.0,
-          "capture": 0.643,
+          "best_possible": 10.0,
+          "capture": 0.7,
           "blanks": 6,
-          "squad_cost": 774,
+          "squad_cost": 845,
           "formation": "3-4-3",
           "bench_boost_forecast": 0.0,
           "triple_captain_forecast": 0.0
@@ -62,9 +62,9 @@
           "captain": "Mendy",
           "captain_points": 1.0,
           "captain_regret": 9.0,
-          "bench_points": 15.0,
-          "best_possible": 57.0,
-          "capture": 0.649,
+          "bench_points": 16.0,
+          "best_possible": 58.0,
+          "capture": 0.638,
           "blanks": 2,
           "squad_cost": 820,
           "formation": "5-4-1",
@@ -247,50 +247,85 @@
           "triple_captain_forecast": 4.9
         }
       }
+    },
+    {
+      "round": 8,
+      "paths": {
+        "engine": {
+          "total": 43.0,
+          "starting_points": 43.0,
+          "captain": "Saka",
+          "captain_points": 0.0,
+          "captain_regret": 17.0,
+          "bench_points": 20.0,
+          "best_possible": 73.0,
+          "capture": 0.589,
+          "blanks": 2,
+          "squad_cost": 999,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 14.9,
+          "triple_captain_forecast": 5.0
+        },
+        "form": {
+          "total": 48.0,
+          "starting_points": 40.0,
+          "captain": "Haaland",
+          "captain_points": 8.0,
+          "captain_regret": 0.0,
+          "bench_points": 11.0,
+          "best_possible": 51.0,
+          "capture": 0.941,
+          "blanks": 1,
+          "squad_cost": 981,
+          "formation": "4-5-1",
+          "bench_boost_forecast": 12.0,
+          "triple_captain_forecast": 4.9
+        }
+      }
     }
   ],
   "projection_calibration": {
-    "n": 1400,
+    "n": 1600,
     "bands": [
       {
         "low": 1,
         "high": 5,
-        "n": 35,
-        "predicted": 4.945,
-        "actual": 5.457,
-        "gap": 0.512
+        "n": 40,
+        "predicted": 4.954,
+        "actual": 5.25,
+        "gap": 0.296
       },
       {
         "low": 6,
         "high": 10,
-        "n": 35,
-        "predicted": 4.191,
-        "actual": 4.257,
-        "gap": 0.066
+        "n": 40,
+        "predicted": 4.225,
+        "actual": 4.225,
+        "gap": 0.0
       },
       {
         "low": 11,
         "high": 20,
-        "n": 70,
-        "predicted": 3.841,
-        "actual": 4.043,
-        "gap": 0.202
+        "n": 80,
+        "predicted": 3.866,
+        "actual": 3.962,
+        "gap": 0.096
       },
       {
         "low": 21,
         "high": 50,
-        "n": 210,
-        "predicted": 3.413,
-        "actual": 3.719,
+        "n": 240,
+        "predicted": 3.427,
+        "actual": 3.733,
         "gap": 0.306
       },
       {
         "low": 51,
         "high": 200,
-        "n": 1050,
-        "predicted": 2.6,
+        "n": 1200,
+        "predicted": 2.62,
         "actual": 2.999,
-        "gap": 0.4
+        "gap": 0.38
       }
     ]
   },
@@ -301,6 +336,7 @@
     4,
     5,
     6,
-    7
+    7,
+    8
   ]
 }
