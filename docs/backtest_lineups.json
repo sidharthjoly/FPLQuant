@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-26T13:51:27+00:00",
+  "generated_at": "2026-11-03T14:52:01+00:00",
   "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "rounds": [
@@ -12,26 +12,26 @@
           "captain": "Saka",
           "captain_points": 9.0,
           "captain_regret": 2.0,
-          "bench_points": 14.0,
-          "best_possible": 67.0,
-          "capture": 0.821,
+          "bench_points": 15.0,
+          "best_possible": 68.0,
+          "capture": 0.809,
           "blanks": 1,
           "squad_cost": 995,
           "formation": "3-5-2",
-          "bench_boost_forecast": 8.2,
-          "triple_captain_forecast": 3.0
+          "bench_boost_forecast": 8.1,
+          "triple_captain_forecast": 2.9
         },
         "form": {
-          "total": 7.0,
-          "starting_points": 7.0,
-          "captain": "Suzuki",
+          "total": 13.0,
+          "starting_points": 13.0,
+          "captain": "Penders",
           "captain_points": 0.0,
-          "captain_regret": 2.0,
+          "captain_regret": 3.0,
           "bench_points": 1.0,
-          "best_possible": 10.0,
-          "capture": 0.7,
-          "blanks": 6,
-          "squad_cost": 845,
+          "best_possible": 17.0,
+          "capture": 0.765,
+          "blanks": 4,
+          "squad_cost": 914,
           "formation": "3-4-3",
           "bench_boost_forecast": 0.0,
           "triple_captain_forecast": 0.0
@@ -42,33 +42,33 @@
       "round": 2,
       "paths": {
         "engine": {
-          "total": 70.0,
-          "starting_points": 57.0,
+          "total": 69.0,
+          "starting_points": 56.0,
           "captain": "Haaland",
           "captain_points": 13.0,
           "captain_regret": 0.0,
-          "bench_points": 27.0,
-          "best_possible": 92.0,
-          "capture": 0.761,
-          "blanks": 0,
-          "squad_cost": 1000,
+          "bench_points": 26.0,
+          "best_possible": 90.0,
+          "capture": 0.767,
+          "blanks": 1,
+          "squad_cost": 995,
           "formation": "3-4-3",
-          "bench_boost_forecast": 14.4,
+          "bench_boost_forecast": 14.2,
           "triple_captain_forecast": 5.8
         },
         "form": {
-          "total": 37.0,
-          "starting_points": 36.0,
+          "total": 35.0,
+          "starting_points": 34.0,
           "captain": "Mendy",
           "captain_points": 1.0,
           "captain_regret": 9.0,
-          "bench_points": 16.0,
-          "best_possible": 58.0,
-          "capture": 0.638,
+          "bench_points": 15.0,
+          "best_possible": 56.0,
+          "capture": 0.625,
           "blanks": 2,
-          "squad_cost": 820,
+          "squad_cost": 825,
           "formation": "5-4-1",
-          "bench_boost_forecast": 5.1,
+          "bench_boost_forecast": 4.9,
           "triple_captain_forecast": 2.8
         }
       }
@@ -82,9 +82,9 @@
           "captain": "Haaland",
           "captain_points": 9.0,
           "captain_regret": 4.0,
-          "bench_points": 12.0,
-          "best_possible": 72.0,
-          "capture": 0.903,
+          "bench_points": 19.0,
+          "best_possible": 79.0,
+          "capture": 0.823,
           "blanks": 0,
           "squad_cost": 997,
           "formation": "3-4-3",
@@ -92,18 +92,18 @@
           "triple_captain_forecast": 7.3
         },
         "form": {
-          "total": 55.0,
-          "starting_points": 52.0,
+          "total": 57.0,
+          "starting_points": 54.0,
           "captain": "Cherki",
           "captain_points": 3.0,
           "captain_regret": 8.0,
-          "bench_points": 12.0,
-          "best_possible": 70.0,
-          "capture": 0.786,
+          "bench_points": 9.0,
+          "best_possible": 69.0,
+          "capture": 0.826,
           "blanks": 1,
-          "squad_cost": 998,
-          "formation": "3-5-2",
-          "bench_boost_forecast": 6.7,
+          "squad_cost": 997,
+          "formation": "4-5-1",
+          "bench_boost_forecast": 6.0,
           "triple_captain_forecast": 3.7
         }
       }
@@ -117,29 +117,29 @@
           "captain": "Haaland",
           "captain_points": 9.0,
           "captain_regret": 3.0,
-          "bench_points": 19.0,
-          "best_possible": 85.0,
-          "capture": 0.812,
+          "bench_points": 6.0,
+          "best_possible": 73.0,
+          "capture": 0.945,
           "blanks": 0,
-          "squad_cost": 996,
+          "squad_cost": 999,
           "formation": "3-4-3",
           "bench_boost_forecast": 14.9,
-          "triple_captain_forecast": 6.0
+          "triple_captain_forecast": 6.2
         },
         "form": {
-          "total": 62.0,
-          "starting_points": 61.0,
-          "captain": "Gakpo",
-          "captain_points": 1.0,
-          "captain_regret": 14.0,
-          "bench_points": 28.0,
-          "best_possible": 98.0,
-          "capture": 0.633,
+          "total": 60.0,
+          "starting_points": 57.0,
+          "captain": "\u00d8degaard",
+          "captain_points": 3.0,
+          "captain_regret": 12.0,
+          "bench_points": 47.0,
+          "best_possible": 116.0,
+          "capture": 0.517,
           "blanks": 0,
-          "squad_cost": 987,
-          "formation": "5-4-1",
-          "bench_boost_forecast": 8.8,
-          "triple_captain_forecast": 3.2
+          "squad_cost": 991,
+          "formation": "5-3-2",
+          "bench_boost_forecast": 9.2,
+          "triple_captain_forecast": 3.3
         }
       }
     },
@@ -147,34 +147,34 @@
       "round": 5,
       "paths": {
         "engine": {
-          "total": 56.0,
-          "starting_points": 50.0,
+          "total": 47.0,
+          "starting_points": 41.0,
           "captain": "Haaland",
           "captain_points": 6.0,
-          "captain_regret": 8.0,
-          "bench_points": 16.0,
+          "captain_regret": 0.0,
+          "bench_points": 25.0,
           "best_possible": 72.0,
-          "capture": 0.778,
+          "capture": 0.653,
           "blanks": 0,
           "squad_cost": 1000,
           "formation": "3-4-3",
-          "bench_boost_forecast": 15.4,
+          "bench_boost_forecast": 15.6,
           "triple_captain_forecast": 6.7
         },
         "form": {
-          "total": 50.0,
-          "starting_points": 45.0,
+          "total": 55.0,
+          "starting_points": 50.0,
           "captain": "Bogle",
           "captain_points": 5.0,
           "captain_regret": 9.0,
-          "bench_points": 26.0,
+          "bench_points": 21.0,
           "best_possible": 80.0,
-          "capture": 0.625,
+          "capture": 0.688,
           "blanks": 1,
           "squad_cost": 999,
           "formation": "5-3-2",
-          "bench_boost_forecast": 10.2,
-          "triple_captain_forecast": 4.0
+          "bench_boost_forecast": 10.0,
+          "triple_captain_forecast": 5.1
         }
       }
     },
@@ -182,34 +182,34 @@
       "round": 6,
       "paths": {
         "engine": {
-          "total": 31.0,
-          "starting_points": 30.0,
+          "total": 30.0,
+          "starting_points": 29.0,
           "captain": "B.Fernandes",
           "captain_points": 1.0,
           "captain_regret": 7.0,
           "bench_points": 13.0,
-          "best_possible": 48.0,
-          "capture": 0.646,
+          "best_possible": 47.0,
+          "capture": 0.638,
           "blanks": 2,
-          "squad_cost": 1000,
+          "squad_cost": 996,
           "formation": "3-5-2",
-          "bench_boost_forecast": 14.6,
-          "triple_captain_forecast": 5.2
+          "bench_boost_forecast": 14.7,
+          "triple_captain_forecast": 5.1
         },
         "form": {
-          "total": 38.0,
-          "starting_points": 35.0,
-          "captain": "Tarkowski",
-          "captain_points": 3.0,
-          "captain_regret": 12.0,
+          "total": 44.0,
+          "starting_points": 38.0,
+          "captain": "Gro\u00df",
+          "captain_points": 6.0,
+          "captain_regret": 9.0,
           "bench_points": 16.0,
-          "best_possible": 63.0,
-          "capture": 0.603,
+          "best_possible": 66.0,
+          "capture": 0.667,
           "blanks": 1,
-          "squad_cost": 939,
+          "squad_cost": 938,
           "formation": "5-4-1",
-          "bench_boost_forecast": 11.1,
-          "triple_captain_forecast": 5.5
+          "bench_boost_forecast": 11.0,
+          "triple_captain_forecast": 6.3
         }
       }
     },
@@ -222,29 +222,29 @@
           "captain": "Haaland",
           "captain_points": 13.0,
           "captain_regret": 0.0,
-          "bench_points": 19.0,
-          "best_possible": 81.0,
-          "capture": 0.827,
+          "bench_points": 9.0,
+          "best_possible": 73.0,
+          "capture": 0.918,
           "blanks": 1,
           "squad_cost": 1000,
           "formation": "3-4-3",
-          "bench_boost_forecast": 15.2,
-          "triple_captain_forecast": 7.3
+          "bench_boost_forecast": 15.3,
+          "triple_captain_forecast": 7.4
         },
         "form": {
-          "total": 49.0,
-          "starting_points": 44.0,
+          "total": 50.0,
+          "starting_points": 45.0,
           "captain": "Gro\u00df",
           "captain_points": 5.0,
           "captain_regret": 8.0,
-          "bench_points": 31.0,
-          "best_possible": 84.0,
-          "capture": 0.583,
+          "bench_points": 27.0,
+          "best_possible": 81.0,
+          "capture": 0.617,
           "blanks": 2,
-          "squad_cost": 1000,
-          "formation": "3-5-2",
-          "bench_boost_forecast": 11.1,
-          "triple_captain_forecast": 4.9
+          "squad_cost": 998,
+          "formation": "4-4-2",
+          "bench_boost_forecast": 11.3,
+          "triple_captain_forecast": 6.1
         }
       }
     },
@@ -252,80 +252,115 @@
       "round": 8,
       "paths": {
         "engine": {
-          "total": 43.0,
-          "starting_points": 43.0,
+          "total": 50.0,
+          "starting_points": 50.0,
           "captain": "Saka",
           "captain_points": 0.0,
           "captain_regret": 17.0,
-          "bench_points": 20.0,
+          "bench_points": 12.0,
           "best_possible": 73.0,
-          "capture": 0.589,
+          "capture": 0.685,
           "blanks": 2,
-          "squad_cost": 999,
+          "squad_cost": 997,
           "formation": "3-4-3",
           "bench_boost_forecast": 14.9,
           "triple_captain_forecast": 5.0
         },
         "form": {
-          "total": 48.0,
-          "starting_points": 40.0,
+          "total": 46.0,
+          "starting_points": 38.0,
           "captain": "Haaland",
           "captain_points": 8.0,
           "captain_regret": 0.0,
-          "bench_points": 11.0,
-          "best_possible": 51.0,
-          "capture": 0.941,
+          "bench_points": 24.0,
+          "best_possible": 62.0,
+          "capture": 0.742,
           "blanks": 1,
-          "squad_cost": 981,
-          "formation": "4-5-1",
-          "bench_boost_forecast": 12.0,
-          "triple_captain_forecast": 4.9
+          "squad_cost": 934,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 12.6,
+          "triple_captain_forecast": 4.8
+        }
+      }
+    },
+    {
+      "round": 9,
+      "paths": {
+        "engine": {
+          "total": 77.0,
+          "starting_points": 75.0,
+          "captain": "Haaland",
+          "captain_points": 2.0,
+          "captain_regret": 13.0,
+          "bench_points": 10.0,
+          "best_possible": 93.0,
+          "capture": 0.828,
+          "blanks": 0,
+          "squad_cost": 1000,
+          "formation": "4-3-3",
+          "bench_boost_forecast": 14.7,
+          "triple_captain_forecast": 6.3
+        },
+        "form": {
+          "total": 79.0,
+          "starting_points": 64.0,
+          "captain": "Van Hecke",
+          "captain_points": 15.0,
+          "captain_regret": 0.0,
+          "bench_points": 17.0,
+          "best_possible": 88.0,
+          "capture": 0.898,
+          "blanks": 0,
+          "squad_cost": 944,
+          "formation": "3-4-3",
+          "bench_boost_forecast": 12.2,
+          "triple_captain_forecast": 3.8
         }
       }
     }
   ],
   "projection_calibration": {
-    "n": 1600,
+    "n": 1800,
     "bands": [
       {
         "low": 1,
         "high": 5,
-        "n": 40,
-        "predicted": 4.954,
-        "actual": 5.25,
-        "gap": 0.296
+        "n": 45,
+        "predicted": 4.957,
+        "actual": 6.067,
+        "gap": 1.11
       },
       {
         "low": 6,
         "high": 10,
-        "n": 40,
-        "predicted": 4.225,
-        "actual": 4.225,
-        "gap": 0.0
+        "n": 45,
+        "predicted": 4.217,
+        "actual": 3.867,
+        "gap": -0.35
       },
       {
         "low": 11,
         "high": 20,
-        "n": 80,
-        "predicted": 3.866,
-        "actual": 3.962,
-        "gap": 0.096
+        "n": 90,
+        "predicted": 3.885,
+        "actual": 3.811,
+        "gap": -0.074
       },
       {
         "low": 21,
         "high": 50,
-        "n": 240,
-        "predicted": 3.427,
-        "actual": 3.733,
-        "gap": 0.306
+        "n": 270,
+        "predicted": 3.444,
+        "actual": 4.033,
+        "gap": 0.589
       },
       {
         "low": 51,
         "high": 200,
-        "n": 1200,
-        "predicted": 2.62,
-        "actual": 2.999,
-        "gap": 0.38
+        "n": 1350,
+        "predicted": 2.635,
+        "actual": 2.964,
+        "gap": 0.329
       }
     ]
   },
@@ -337,6 +372,7 @@
     5,
     6,
     7,
-    8
+    8,
+    9
   ]
 }
