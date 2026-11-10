@@ -1,4 +1,4 @@
-import { API_BASE } from "./config.js";
+import { API_BASE } from "./config.js?v=__ASSET_VERSION__";
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {

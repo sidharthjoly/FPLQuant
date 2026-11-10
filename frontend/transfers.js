@@ -1,7 +1,7 @@
-import { api } from "./api.js";
-import { clear, jerseyIcon, playerMetaLine } from "./components.js";
-import { playerLink } from "./explorer.js";
-import { kitFor } from "./kits.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { clear, jerseyIcon, playerMetaLine } from "./components.js?v=__ASSET_VERSION__";
+import { playerLink } from "./explorer.js?v=__ASSET_VERSION__";
+import { kitFor } from "./kits.js?v=__ASSET_VERSION__";
 
 const form = document.getElementById("transfers-form");
 const riskToggle = document.getElementById("transfer-risk-toggle");

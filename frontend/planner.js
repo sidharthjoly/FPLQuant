@@ -11,11 +11,11 @@
 // information — so the timeline reads left to right with the first card
 // highlighted, and the rest deliberately quieter.
 
-import { api } from "./api.js";
-import { clear, jerseyIcon, playerMetaLine } from "./components.js";
-import { playerLink } from "./explorer.js";
-import { kitFor } from "./kits.js";
-import { onTabChange } from "./tabs.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { clear, jerseyIcon, playerMetaLine } from "./components.js?v=__ASSET_VERSION__";
+import { playerLink } from "./explorer.js?v=__ASSET_VERSION__";
+import { kitFor } from "./kits.js?v=__ASSET_VERSION__";
+import { onTabChange } from "./tabs.js?v=__ASSET_VERSION__";
 
 const CHIP_LABELS = {
   wildcard: "Wildcard",

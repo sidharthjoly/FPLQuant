@@ -1,6 +1,6 @@
-import { api } from "./api.js";
-import { clear } from "./components.js";
-import { playerLink } from "./explorer.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { clear } from "./components.js?v=__ASSET_VERSION__";
+import { playerLink } from "./explorer.js?v=__ASSET_VERSION__";
 
 const TOP_N = 15;
 const SVG_NS = "http://www.w3.org/2000/svg";

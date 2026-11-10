@@ -1,7 +1,7 @@
-import { api } from "./api.js";
-import { clear, donutGauge, jerseyIcon } from "./components.js";
-import { kitFor } from "./kits.js";
-import { setActiveTab } from "./tabs.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { clear, donutGauge, jerseyIcon } from "./components.js?v=__ASSET_VERSION__";
+import { kitFor } from "./kits.js?v=__ASSET_VERSION__";
+import { setActiveTab } from "./tabs.js?v=__ASSET_VERSION__";
 
 const POSITION_NAMES = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
 // Flat tones that also step in lightness, kindest to hardest, so the scale

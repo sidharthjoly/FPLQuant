@@ -1,8 +1,8 @@
-import { api } from "./api.js";
-import { clear, jerseyIcon } from "./components.js";
-import { playerLink } from "./explorer.js";
-import { kitFor } from "./kits.js";
-import { updateHero } from "./main.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { clear, jerseyIcon } from "./components.js?v=__ASSET_VERSION__";
+import { playerLink } from "./explorer.js?v=__ASSET_VERSION__";
+import { kitFor } from "./kits.js?v=__ASSET_VERSION__";
+import { updateHero } from "./main.js?v=__ASSET_VERSION__";
 
 const POSITION_ORDER = [1, 2, 3, 4];
 const PITCH_ROW_Y = { 1: 77, 2: 53, 3: 29, 4: 5 }; // % from top; attack faces up

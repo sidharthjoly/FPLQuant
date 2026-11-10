@@ -29,6 +29,16 @@ jobs:
 
       - uses: actions/configure-pages@v6
 
+      # Cloudflare in front of the custom domain caches CSS/JS and tells
+      # browsers to keep them for 4 hours, while index.html is not cached.
+      # Without this a deploy serves the new page with the old stylesheet and
+      # scripts. Every asset link and module import carries
+      # ?v=__ASSET_VERSION__; stamping the commit here gives each deploy URLs
+      # no cache has seen. Every reference to a module must carry the same
+      # token, or the browser loads it twice and module state splits.
+      - name: Version asset URLs
+        run: sed -i "s/__ASSET_VERSION__/${GITHUB_SHA::7}/g" frontend/index.html frontend/*.js
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: frontend

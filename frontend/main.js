@@ -1,8 +1,8 @@
-import { api } from "./api.js";
-import { API_BASE } from "./config.js";
-import { playerLink } from "./explorer.js";
-import { onTabChange } from "./tabs.js";
-import { loadTicker } from "./ticker.js";
+import { api } from "./api.js?v=__ASSET_VERSION__";
+import { API_BASE } from "./config.js?v=__ASSET_VERSION__";
+import { playerLink } from "./explorer.js?v=__ASSET_VERSION__";
+import { onTabChange } from "./tabs.js?v=__ASSET_VERSION__";
+import { loadTicker } from "./ticker.js?v=__ASSET_VERSION__";
 
 const feedLabel = document.getElementById("feed-label");
 const feedNote = document.getElementById("feed-note");
