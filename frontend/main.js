@@ -4,7 +4,6 @@ import { playerLink } from "./explorer.js";
 import { onTabChange } from "./tabs.js";
 import { loadTicker } from "./ticker.js";
 
-const themeToggle = document.getElementById("theme-toggle");
 const feedLabel = document.getElementById("feed-label");
 const feedNote = document.getElementById("feed-note");
 const pulseDot = document.querySelector(".fq-pulse-dot");
@@ -18,19 +17,13 @@ onTabChange((target) => {
   }
 });
 
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  themeToggle.classList.toggle("is-light", theme === "light");
-}
-
-const savedTheme = localStorage.getItem("fplquant-theme");
-applyTheme(savedTheme === "light" ? "light" : "dark");
-
-themeToggle.addEventListener("click", () => {
-  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  localStorage.setItem("fplquant-theme", next);
-  applyTheme(next);
-});
+// Sticky sidebars sit just under the sticky header, whose height changes with
+// the viewport (the nav wraps on narrow screens). Measured rather than hard-
+// coded, and published as --fq-sticky-top for styles.css to read.
+const headerEl = document.querySelector(".fq-header");
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty("--fq-sticky-top", `${headerEl.offsetHeight}px`);
+}).observe(headerEl);
 
 // Backend health probe — purely cosmetic (the status pill and footer note),
 // every real fetch already handles its own errors.

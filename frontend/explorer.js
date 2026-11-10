@@ -4,7 +4,9 @@ import { kitFor } from "./kits.js";
 import { setActiveTab } from "./tabs.js";
 
 const POSITION_NAMES = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
-const FDR_COLORS = { 1: "#5fc9a3", 2: "#7cc39a", 3: "#c2b487", 4: "#d69279", 5: "#e0736f" };
+// Flat tones that also step in lightness, kindest to hardest, so the scale
+// still reads without colour.
+const FDR_COLORS = { 1: "#e3edc0", 2: "#c3d878", 3: "#c3a016", 4: "#d0572f", 5: "#8f1d1d" };
 
 const searchInput = document.getElementById("player-search");
 const resultsList = document.getElementById("search-results");
@@ -602,7 +604,7 @@ function buildTrendChart(values) {
   for (const y of [40, 100, 160, 200]) {
     const line = document.createElementNS(SVG_NS, "path");
     line.setAttribute("d", `M0 ${y} H${width}`);
-    line.setAttribute("stroke", "var(--fq-line)");
+    line.setAttribute("stroke", "var(--fq-track)");
     line.setAttribute("stroke-width", "1");
     svg.appendChild(line);
   }

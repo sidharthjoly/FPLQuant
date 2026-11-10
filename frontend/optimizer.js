@@ -6,7 +6,9 @@ import { updateHero } from "./main.js";
 
 const POSITION_ORDER = [1, 2, 3, 4];
 const PITCH_ROW_Y = { 1: 77, 2: 53, 3: 29, 4: 5 }; // % from top; attack faces up
-const FDR_COLORS = { 1: "#5fc9a3", 2: "#7cc39a", 3: "#c2b487", 4: "#d69279", 5: "#e0736f" };
+// Flat tones that also step in lightness, kindest to hardest, so the scale
+// still reads without colour.
+const FDR_COLORS = { 1: "#e3edc0", 2: "#c3d878", 3: "#c3a016", 4: "#d0572f", 5: "#8f1d1d" };
 
 const form = document.getElementById("optimizer-form");
 const riskToggle = document.getElementById("risk-toggle");
@@ -234,7 +236,15 @@ function pitchPlayerEl(player, xi, xPct, yPct) {
   name.textContent = player.web_name;
   const line = document.createElement("div");
   line.className = "fq-pitch-player__line";
-  line.textContent = `£${(player.now_cost / 10).toFixed(1)}m · ${player.predicted_points.toFixed(1)} pts`;
+  // Price and points are separate spans so a phone-width pitch can drop the
+  // price and keep the card narrow enough not to overlap its neighbours.
+  const price = document.createElement("span");
+  price.className = "fq-pitch-player__price";
+  price.textContent = `£${(player.now_cost / 10).toFixed(1)}m · `;
+  const pts = document.createElement("span");
+  pts.textContent = `${player.predicted_points.toFixed(1)} pts`;
+  line.appendChild(price);
+  line.appendChild(pts);
   info.appendChild(name);
   info.appendChild(line);
   card.appendChild(info);

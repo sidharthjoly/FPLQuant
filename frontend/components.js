@@ -46,7 +46,7 @@ export function donutGauge(pct, color) {
   const track = document.createElementNS(SVG_NS, "path");
   track.setAttribute("d", "M16 82 A54 54 0 0 1 124 82");
   track.setAttribute("fill", "none");
-  track.setAttribute("stroke", "var(--fq-line)");
+  track.setAttribute("stroke", "var(--fq-track)");
   track.setAttribute("stroke-width", "9");
   track.setAttribute("stroke-linecap", "round");
   svg.appendChild(track);

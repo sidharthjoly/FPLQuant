@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FPL Quant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="fq-header">
     <div class="fq-header__bar">
       <div class="fq-logo">
-        <span class="fq-logo__mark">FPL</span>
-        <span class="fq-logo__name">Quant</span>
+        <span class="fq-logo__lockup"><span class="fq-logo__mark">FPL</span> <span class="fq-logo__name">Quant</span></span>
         <span class="fq-pulse-dot"></span>
         <span class="fq-feed-label" id="feed-label">connecting</span>
       </div>
@@ -27,9 +27,6 @@
         <button class="fq-nav__btn" data-tab="planner" role="tab" aria-selected="false">Planner</button>
       </nav>
 
-      <button class="fq-theme-toggle" id="theme-toggle" aria-label="Toggle theme">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"></circle><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" stroke="none"></path></svg>
-      </button>
     </div>
 
     <div class="fq-tape-row">
