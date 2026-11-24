@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-10T15:25:34+00:00",
+  "generated_at": "2026-11-24T18:37:49+00:00",
   "engine_rev": "2e791e3a7cc8c9dc3bdb447ab2d53ba8aa8b70d4",
   "season": "26/27",
   "rounds": [
@@ -12,9 +12,9 @@
           "captain": "Saka",
           "captain_points": 9.0,
           "captain_regret": 2.0,
-          "bench_points": 15.0,
-          "best_possible": 68.0,
-          "capture": 0.809,
+          "bench_points": 14.0,
+          "best_possible": 67.0,
+          "capture": 0.821,
           "blanks": 1,
           "squad_cost": 995,
           "formation": "3-5-2",
@@ -22,16 +22,16 @@
           "triple_captain_forecast": 2.9
         },
         "form": {
-          "total": 19.0,
-          "starting_points": 19.0,
-          "captain": "Steele",
+          "total": 21.0,
+          "starting_points": 21.0,
+          "captain": "Walton",
           "captain_points": 0.0,
-          "captain_regret": 9.0,
-          "bench_points": 1.0,
-          "best_possible": 29.0,
-          "capture": 0.655,
-          "blanks": 6,
-          "squad_cost": 795,
+          "captain_regret": 17.0,
+          "bench_points": 2.0,
+          "best_possible": 40.0,
+          "capture": 0.525,
+          "blanks": 7,
+          "squad_cost": 750,
           "formation": "3-4-3",
           "bench_boost_forecast": 0.0,
           "triple_captain_forecast": 0.0
@@ -62,11 +62,11 @@
           "captain": "Mendy",
           "captain_points": 1.0,
           "captain_regret": 9.0,
-          "bench_points": 16.0,
+          "bench_points": 15.0,
           "best_possible": 56.0,
           "capture": 0.625,
           "blanks": 2,
-          "squad_cost": 830,
+          "squad_cost": 825,
           "formation": "5-4-1",
           "bench_boost_forecast": 4.9,
           "triple_captain_forecast": 2.8
@@ -263,7 +263,7 @@
           "blanks": 2,
           "squad_cost": 997,
           "formation": "3-4-3",
-          "bench_boost_forecast": 14.9,
+          "bench_boost_forecast": 14.8,
           "triple_captain_forecast": 5.0
         },
         "form": {
@@ -352,50 +352,85 @@
           "triple_captain_forecast": 5.4
         }
       }
+    },
+    {
+      "round": 11,
+      "paths": {
+        "engine": {
+          "total": 53.0,
+          "starting_points": 51.0,
+          "captain": "Haaland",
+          "captain_points": 2.0,
+          "captain_regret": 12.0,
+          "bench_points": 20.0,
+          "best_possible": 81.0,
+          "capture": 0.654,
+          "blanks": 1,
+          "squad_cost": 996,
+          "formation": "5-2-3",
+          "bench_boost_forecast": 15.8,
+          "triple_captain_forecast": 5.8
+        },
+        "form": {
+          "total": 46.0,
+          "starting_points": 46.0,
+          "captain": "Vuskovic",
+          "captain_points": 0.0,
+          "captain_regret": 14.0,
+          "bench_points": 28.0,
+          "best_possible": 84.0,
+          "capture": 0.548,
+          "blanks": 1,
+          "squad_cost": 890,
+          "formation": "5-2-3",
+          "bench_boost_forecast": 15.1,
+          "triple_captain_forecast": 6.1
+        }
+      }
     }
   ],
   "projection_calibration": {
-    "n": 2000,
+    "n": 2200,
     "bands": [
       {
         "low": 1,
         "high": 5,
-        "n": 50,
-        "predicted": 4.985,
-        "actual": 6.2,
-        "gap": 1.215
+        "n": 55,
+        "predicted": 5.001,
+        "actual": 5.964,
+        "gap": 0.962
       },
       {
         "low": 6,
         "high": 10,
-        "n": 50,
-        "predicted": 4.256,
-        "actual": 4.22,
-        "gap": -0.036
+        "n": 55,
+        "predicted": 4.274,
+        "actual": 4.527,
+        "gap": 0.253
       },
       {
         "low": 11,
         "high": 20,
-        "n": 100,
-        "predicted": 3.919,
-        "actual": 3.99,
-        "gap": 0.071
+        "n": 110,
+        "predicted": 3.938,
+        "actual": 3.891,
+        "gap": -0.047
       },
       {
         "low": 21,
         "high": 50,
-        "n": 300,
-        "predicted": 3.473,
-        "actual": 4.05,
-        "gap": 0.577
+        "n": 330,
+        "predicted": 3.483,
+        "actual": 4.015,
+        "gap": 0.532
       },
       {
         "low": 51,
         "high": 200,
-        "n": 1500,
-        "predicted": 2.646,
-        "actual": 2.933,
-        "gap": 0.288
+        "n": 1650,
+        "predicted": 2.651,
+        "actual": 2.936,
+        "gap": 0.284
       }
     ]
   },
@@ -409,6 +444,7 @@
     7,
     8,
     9,
-    10
+    10,
+    11
   ]
 }
